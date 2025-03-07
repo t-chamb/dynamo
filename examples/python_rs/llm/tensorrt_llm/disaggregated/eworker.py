@@ -288,7 +288,7 @@ class TensorrtLLMEngine(BaseTensorrtLLMEngine):
                     self._publishing_cv.notify_all()
             try:
                 logger.info("DTTanmay:: Testing testing")
-                s = self._llm_engine.get_stats_async(timeout=5)
+                s = self._llm_engine.get_kv_cache_events_async(timeout=5)
                 logger.info(f"DTTanmay:: Stats expect returned: {s}")
                 async for stat in s:
                     logger.info(f"DTTanmay:: Stats expect generated: {stat}")

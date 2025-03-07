@@ -138,7 +138,7 @@ class TensorrtLLMEngine(BaseTensorrtLLMEngine):
                 yield json.loads(response)
 
             logger.info(f"Dynemo:: Stats going to call")
-            stats = self._llm_engine.get_stats_async(timeout=5)
+            stats = self._llm_engine.get_kv_cache_events_async(timeout=5)
             async for stat in stats:
                 logger.info(f"Dynemo:: Stats: {stat}")
             logger.info(f"Dynemo:: Stats: Over")
