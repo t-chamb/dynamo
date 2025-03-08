@@ -49,14 +49,7 @@ from triton_distributed.runtime import (
     triton_worker,
 )
 
-import traceback
-import weakref
-import queue
-import threading
-
 logger.set_level("debug")
-
-
 
 
 class WorkerId:
@@ -68,8 +61,6 @@ class WorkerId:
         return "%s^%s" % (self.completions_lease_id, self.chat_lease_id)
 
 
-
-
 def update_args_from_disagg_config(
     engine_config: LLMAPIConfig, server_config: CtxGenServerConfig
 ):
@@ -78,7 +69,6 @@ def update_args_from_disagg_config(
     engine_config.extra_args.update(**server_config.other_args)
     engine_config.update_sub_configs(server_config.other_args)
     return engine_config
-
 
 
 class TensorrtLLMEngine(BaseTensorrtLLMEngine):
@@ -108,10 +98,9 @@ class TensorrtLLMEngine(BaseTensorrtLLMEngine):
         # needed for disagg
         self._mpi_session = MpiCommSession(sub_comm, n_workers=sub_comm.Get_size())
         engine_config.extra_args["_mpi_session"] = self._mpi_session
-        super().__init__(engine_config, worker_id, publish_stats, publish_kv_cache_events)
-    
-
-
+        super().__init__(
+            engine_config, worker_id, publish_stats, publish_kv_cache_events
+        )
 
     @triton_endpoint(DisaggChatCompletionRequest, DisaggChatCompletionStreamResponse)
     async def generate_chat(self, request):
@@ -199,16 +188,17 @@ class TensorrtLLMEngine(BaseTensorrtLLMEngine):
             signal.raise_signal(signal.SIGINT)
         except Exception as e:
             raise RuntimeError("Failed to generate: " + str(e))
-            
+
         # Start the publishing threads with first request submission
         self._stats_loop = asyncio.get_running_loop()
-        if self.publish_kv_cache_events_thread and not self.publish_kv_cache_events_thread.is_alive():
+        if (
+            self.publish_kv_cache_events_thread
+            and not self.publish_kv_cache_events_thread.is_alive()
+        ):
             self.publish_kv_cache_events_thread.start()
-        
+
         if self.publish_stats_thread and not self.publish_stats_thread.is_alive():
             self.publish_stats_thread.start()
-
-
 
     @triton_endpoint(CompletionRequest, DisaggCompletionStreamResponse)
     async def generate_completions(self, request):
@@ -258,14 +248,17 @@ class TensorrtLLMEngine(BaseTensorrtLLMEngine):
                 yield json.loads(response)
         else:
             raise RuntimeError("Non-streaming is not supported")
-        
+
         # Start the publishing threads with first request submission
-        if self.publish_kv_cache_events_thread and not self.publish_kv_cache_events_thread.is_alive():
-            #[NOTE:] TRTLLM needs the stats to be collected on the same loop as the request handler.
+        if (
+            self.publish_kv_cache_events_thread
+            and not self.publish_kv_cache_events_thread.is_alive()
+        ):
+            # [NOTE:] TRTLLM needs the stats to be collected on the same loop as the request handler.
             self._stats_loop = asyncio.get_running_loop()
             self.publish_kv_cache_events_thread.set_loop(self._stats_loop)
             self.publish_kv_cache_events_thread.start()
-        
+
         if self.publish_stats_thread and not self.publish_stats_thread.is_alive():
             self._stats_loop = asyncio.get_running_loop()
             self.publish_stats_thread.set_loop(self._stats_loop)
@@ -300,12 +293,12 @@ async def worker(
     chat_endpoint = component.endpoint("chat/completions")
 
     if server_type == "gen":
-       if publish_stats:
-           logger.warning("Stats can only be published for ctx server")
-           publish_stats = False
-       if publish_kv_cache_events:
-           logger.warning("KV cache events can only be published for ctx server")
-           publish_kv_cache_events = False
+        if publish_stats:
+            logger.warning("Stats can only be published for ctx server")
+            publish_stats = False
+        if publish_kv_cache_events:
+            logger.warning("KV cache events can only be published for ctx server")
+            publish_kv_cache_events = False
 
     worker_id = WorkerId(completions_endpoint.lease_id(), chat_endpoint.lease_id()).id()
 
@@ -365,4 +358,3 @@ if __name__ == "__main__":
         with MPICommExecutor(sub_comm) as executor:
             if not is_leader and executor is not None:
                 raise RuntimeError(f"rank{COMM_WORLD} should not have executor")
-
