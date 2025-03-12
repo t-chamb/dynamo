@@ -83,9 +83,10 @@ RUN ldconfig
 ARG UCX_VERSION=v1.18.0
 
 RUN cd /usr/local/src && \
-    curl -fSsL "https://github.com/openucx/ucx/tarball/${UCX_VERSION}" | tar xz && \
-    cd openucx-ucx* && \
-    ./autogen.sh && ./configure     \
+    git clone --branch="${UCX_VERSION}" --single-branch https://github.com/openucx/ucx.git &&\
+    cd ucx && \
+    ./autogen.sh &&\
+    ./configure                     \
         --enable-shared             \
         --disable-static            \
         --disable-doxygen-doc       \
@@ -97,9 +98,9 @@ RUN cd /usr/local/src && \
         --with-dm                   \
         --with-gdrcopy=/usr/local   \
         --enable-mt                 \
-        --with-mlx5-dv &&           \
-    make -j &&                      \
-    make -j install-strip &&        \
+        --with-mlx5-dv            &&\
+    make -j &&\
+    make -j install-strip &&\
     ldconfig
 
 ENV LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH

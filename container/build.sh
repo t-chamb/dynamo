@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!bash -e
 # SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -14,6 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Ensure the script is executed with Bash.
+if [ -z "$BASH_VERSION" ]; then
+  echo "Error: This script must be run with Bash version 4 or higher." >&2
+  echo "If you are using macOS you can install a newer Bash version with: brew install bash" >&2
+  exit 1
+fi
+
+# Now that we're sure it's Bash, enforce a minimum version.
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "Error: Bash version 4 or higher is required. You are running version $BASH_VERSION." >&2
+  echo "If you are using macOS you can install a newer Bash version with: brew install bash" >&2
+  exit 1
+fi
 
 TAG=
 RUN_PREFIX=
@@ -349,7 +362,7 @@ if [ -z "$RUN_PREFIX" ]; then
     set -x
 fi
 
-$RUN_PREFIX docker buildx build -f $DOCKERFILE $TARGET_STR $PLATFORM $BUILD_ARGS $CACHE_FROM $CACHE_TO --output type=docker $TAG $LATEST_TAG $BUILD_CONTEXT_ARG $BUILD_CONTEXT $NO_CACHE
+$RUN_PREFIX docker buildx build --progress=plain -f $DOCKERFILE $TARGET_STR $PLATFORM $BUILD_ARGS $CACHE_FROM $CACHE_TO --output type=docker $TAG $LATEST_TAG $BUILD_CONTEXT_ARG $BUILD_CONTEXT $NO_CACHE
 
 { set +x; } 2>/dev/null
 
