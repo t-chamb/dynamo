@@ -30,7 +30,7 @@ fi
 
 TAG=
 RUN_PREFIX=
-PLATFORM=linux/amd64
+PLATFORM=linux/arm64
 
 # Get short commit hash
 commit_id=$(git rev-parse --short HEAD)
@@ -70,7 +70,7 @@ STANDARD_BASE_IMAGE=nvcr.io/nvidia/tritonserver
 STANDARD_BASE_IMAGE_TAG=${STANDARD_BASE_VERSION}-py3
 
 TENSORRTLLM_BASE_VERSION=25.01
-TENSORRTLLM_BASE_IMAGE="gitlab-master.nvidia.com:5005/dl/dgx/tritonserver/tensorrt-llm/amd64"
+TENSORRTLLM_BASE_IMAGE="gitlab-master.nvidia.com:5005/dl/dgx/tritonserver/tensorrt-llm/arm64"
 TENSORRTLLM_BASE_IMAGE_TAG=krish-fix-trtllm-build.23766174
 TENSORRTLLM_PIP_WHEEL_PATH=""
 
@@ -313,12 +313,12 @@ if [[ $FRAMEWORK == "VLLM" ]]; then
     # Clone original NIXL to temp directory
 
     if [ ! -z ${GITHUB_TOKEN} ]; then
-        git clone https://oauth2:${GITHUB_TOKEN}@github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"
+        git clone --branch=main --single-branch https://oauth2:${GITHUB_TOKEN}@github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"
     else
         # Try HTTPS first with credential prompting disabled, fall back to SSH if it fails
-        if ! GIT_TERMINAL_PROMPT=0 git clone https://github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"; then
+        if ! GIT_TERMINAL_PROMPT=0 git clone --branch=main --single-branch https://github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"; then
             echo "HTTPS clone failed, falling back to SSH..."
-            git clone git@github.com:${NIXL_REPO} "$TEMP_DIR/nixl_src"
+            git clone --branch=main --single-branch git@github.com:${NIXL_REPO} "$TEMP_DIR/nixl_src"
         fi
     fi
 
