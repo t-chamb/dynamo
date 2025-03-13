@@ -253,7 +253,6 @@ get_options() {
     fi
 }
 
-
 show_image_options() {
     echo ""
     echo "Building Dynamo Image: '${TAG}'"
@@ -313,18 +312,18 @@ if [[ $FRAMEWORK == "VLLM" ]]; then
     # Clone original NIXL to temp directory
 
     if [ ! -z ${GITHUB_TOKEN} ]; then
-        git clone --branch=main --single-branch https://oauth2:${GITHUB_TOKEN}@github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"
+        git clone --branch=dmitry-tokarev-test-arm64 --single-branch --depth 1 https://oauth2:${GITHUB_TOKEN}@github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"
     else
         # Try HTTPS first with credential prompting disabled, fall back to SSH if it fails
-        if ! GIT_TERMINAL_PROMPT=0 git clone --branch=main --single-branch https://github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"; then
+        if ! GIT_TERMINAL_PROMPT=0 git clone --branch=dmitry-tokarev-test-arm64 --single-branch --depth 1 https://github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"; then
             echo "HTTPS clone failed, falling back to SSH..."
-            git clone --branch=main --single-branch git@github.com:${NIXL_REPO} "$TEMP_DIR/nixl_src"
+            git clone --branch=dmitry-tokarev-test-arm64 --single-branch --depth 1 git@github.com:${NIXL_REPO} "$TEMP_DIR/nixl_src"
         fi
     fi
 
     cd "$TEMP_DIR/nixl_src"
 
-    git checkout ${NIXL_COMMIT}
+    # git checkout ${NIXL_COMMIT}
 
     BUILD_CONTEXT_ARG+=" --build-context nixl=$TEMP_DIR/nixl_src"
 fi

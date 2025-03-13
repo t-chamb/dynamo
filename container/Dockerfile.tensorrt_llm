@@ -107,7 +107,8 @@ RUN mkdir /opt/dynamo && \
     uv pip install /workspace/dist/ai_dynamo*cp312*.whl && \
     cd /workspace/deploy/dynamo/sdk && \
     uv build --wheel --out-dir /workspace/dist && \
-    uv pip install /workspace/dist/ai_dynamo_sdk*any.whl
+    uv pip install /workspace/dist/ai_dynamo_sdk*any.whl &&\
+    uv pip install numpy
 
 # Package the bindings
 RUN mkdir -p /opt/dynamo/bindings/wheels && \
