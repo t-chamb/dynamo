@@ -43,7 +43,8 @@ jobs:
 
       - name: Set up Rust Toolchain Components
         run: rustup component add rustfmt clippy
-      - run: cargo install sccache@${{ env.SCCACHE_VERSION }}
+      - name: Install sccache
+        run: lib/install-sccache
       - name: Run Cargo Check
         run: cargo check --locked
       - name: Verify Code Formatting
