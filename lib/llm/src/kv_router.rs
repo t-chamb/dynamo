@@ -36,6 +36,7 @@ use crate::kv_router::{
 
 // this should be discovered from the backend
 pub const KV_EVENT_SUBJECT: &str = "kv_events";
+// this is a test change to see how sccache reacts
 pub const KV_HIT_RATE_SUBJECT: &str = "kv-hit-rate";
 
 pub struct KvRouter {
