@@ -6,21 +6,25 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch: {}
+  workflow_dispatch: { }
+
+name: rust
 
 env:
+  # TODO: See if clang/nettle can be removed
+  APT_PACKAGES: libclang-dev nettle-dev protobuf-compiler
   CACHE_VERSION: v1
   RUSTC_WRAPPER: "/home/runner/.cargo/bin/sccache"
-  SCCACHE_VERSION: 0.5.4
+  SCCACHE_VERSION: 0.7.7
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
-          key: ${{ runner.os }}-rust-${{ env.CACHE_VERSION }}-audit-${{ hashFiles('**/Cargo.toml') }}
+          key: ${{ runner.os }}-${{ github.workflow }}-${{ env.CACHE_VERSION }}-${{ github.job }}-${{ hashFiles('**/Cargo.toml', '**/Cargo.lock') }}
           path: |
             ~/.cargo/bin/
             ~/.cargo/registry/index/
@@ -30,13 +34,17 @@ jobs:
             ~/.rustup/
             target/
           restore-keys: |
-            ${{ runner.os }}-rust-${{ env.CACHE_VERSION }}-audit-
-            ${{ runner.os }}-rust-${{ env.CACHE_VERSION }}
-      # TODO: Move script
-      - name: Setup sccache
-        run: lib/install-sccache
+            ${{ runner.os }}-${{ github.workflow }}-${{ env.CACHE_VERSION }}-${{ github.job }}-
+            ${{ runner.os }}-${{ github.workflow }}-${{ env.CACHE_VERSION }}
+      - name: install system packages
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt update
+          sudo DEBIAN_FRONTEND=noninteractive apt install -y ${{ env.APT_PACKAGES }}
+
       - name: Set up Rust Toolchain Components
         run: rustup component add rustfmt clippy
+      - uses: cargo-bins/cargo-binstall@main
+      - run: cargo binstall -y sccache@${{ env.SCCACHE_VERSION }}
       - name: Run Cargo Check
         run: cargo check --locked
       - name: Verify Code Formatting
