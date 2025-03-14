@@ -15,7 +15,7 @@ env:
   APT_PACKAGES: libclang-dev nettle-dev protobuf-compiler
   CACHE_VERSION: v1
   RUSTC_WRAPPER: "/home/runner/.cargo/bin/sccache"
-  SCCACHE_VERSION: 0.7.7
+  SCCACHE_VERSION: 0.10.0
 
 jobs:
   build:
@@ -43,8 +43,7 @@ jobs:
 
       - name: Set up Rust Toolchain Components
         run: rustup component add rustfmt clippy
-      - uses: cargo-bins/cargo-binstall@main
-      - run: cargo binstall -y sccache@${{ env.SCCACHE_VERSION }}
+      - run: cargo install sccache@${{ env.SCCACHE_VERSION }}
       - name: Run Cargo Check
         run: cargo check --locked
       - name: Verify Code Formatting
