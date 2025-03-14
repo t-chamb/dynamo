@@ -43,6 +43,7 @@ jobs:
 
       - name: Set up Rust Toolchain Components
         run: rustup component add rustfmt clippy
+      # TODO: Move script into .github/workflows or install via package manager instead of script
       - name: Install sccache
         run: lib/install-sccache
       - name: Run Cargo Check
