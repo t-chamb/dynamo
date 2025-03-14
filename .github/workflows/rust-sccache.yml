@@ -1,0 +1,51 @@
+---
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+env:
+  CACHE_VERSION: v1
+  RUSTC_WRAPPER: "/home/runner/.cargo/bin/sccache"
+  SCCACHE_VERSION: 0.5.4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v3
+        with:
+          key: ${{ runner.os }}-rust-${{ env.CACHE_VERSION }}-audit-${{ hashFiles('**/Cargo.toml') }}
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ~/.cache/sccache/
+            ~/.rustup/
+            target/
+          restore-keys: |
+            ${{ runner.os }}-rust-${{ env.CACHE_VERSION }}-audit-
+            ${{ runner.os }}-rust-${{ env.CACHE_VERSION }}
+      # TODO: Move script
+      - name: Setup sccache
+        run: lib/install-sccache
+      - name: Set up Rust Toolchain Components
+        run: rustup component add rustfmt clippy
+      - name: Run Cargo Check
+        run: cargo check --locked
+      - name: Verify Code Formatting
+        run: cargo fmt -- --check
+      - name: Run Clippy Checks
+        run: cargo clippy --no-deps --all-targets -- -D warnings
+      - name: Install and Run cargo-deny
+        run: |
+          cargo-deny --version || cargo install cargo-deny@0.16.4
+          cargo-deny check --hide-inclusion-graph licenses --config ${{ github.workspace }}/deny.toml
+      - name: Run Unit Tests
+        run: cargo test --locked --all-targets
