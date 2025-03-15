@@ -14,6 +14,7 @@
 #  limitations under the License.
 
 import os
+import site
 import subprocess
 import sys
 
@@ -32,8 +33,6 @@ def run_executable(executable_name, args=None, capture_output=True, text=True):
         subprocess.CompletedProcess: The result of the executed command.
     """
     # Try to find the executable in the installed package first
-    import site
-
     possible_bin_dirs = []
 
     # Check site-packages location (for installed package)
