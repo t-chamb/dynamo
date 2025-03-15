@@ -20,6 +20,8 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS dev
 
 USER root
 
+# testing
+
 # Install utilities
 RUN apt update -y && apt install -y git wget curl nvtop tmux vim
 # nats
