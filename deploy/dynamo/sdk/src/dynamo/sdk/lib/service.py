@@ -78,13 +78,23 @@ class DynamoService(Service[T]):
         service_name = inner.__name__
         service_args = self._get_service_args(service_name)
 
+        # Initialize envs list if not provided
+        envs = envs or []
+
         if service_args:
-            # Validate and merge service args with existing config
+            # Extract environment variables from ServiceArgs if present
+            if "env" in service_args:
+                env_dict = service_args.pop("env")
+                # Convert env dict to BentoML env format with name/value keys
+                envs.extend([{"name": k, "value": str(v)} for k, v in env_dict.items()])
+
+            # Validate and merge remaining service args with existing config
             validated_args = validate(service_args)
             config.update(validated_args)
+            print("config", config)
             self._remove_service_args(service_name)
 
-        super().__init__(config=config, inner=inner, image=image, envs=envs or [])
+        super().__init__(config=config, inner=inner, image=image, envs=envs)
 
         # Initialize Dynamo configuration
         self._dynamo_config = (
