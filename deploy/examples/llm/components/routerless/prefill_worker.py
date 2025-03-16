@@ -51,9 +51,7 @@ class PrefillWorkerRouterLess:
             + server_context.worker_index
             - 1
         )
-        # TODO: CUDA VIS is not being set via env var?
-        if "CUDA_VISIBLE_DEVICES" not in os.environ:
-            os.environ["CUDA_VISIBLE_DEVICES"] = f"{gpu_idx}"
+        os.environ["CUDA_VISIBLE_DEVICES"] = f"{gpu_idx}"
         self._loaded_metadata = set()
         self.initialized = False
         if self.engine_args.enable_chunked_prefill is not False:
