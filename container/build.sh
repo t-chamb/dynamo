@@ -57,8 +57,8 @@ TENSORRTLLM_BASE_IMAGE="gitlab-master.nvidia.com:5005/dl/dgx/tritonserver/tensor
 TENSORRTLLM_BASE_IMAGE_TAG=krish-fix-trtllm-build.23766174
 TENSORRTLLM_PIP_WHEEL_PATH=""
 
-VLLM_BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
-VLLM_BASE_IMAGE_TAG="25.01-cuda12.8-devel-ubuntu24.04"
+VLLM_BASE_IMAGE="nvcr.io/nvidia/cuda"
+VLLM_BASE_IMAGE_TAG="12.8.1-cudnn-devel-ubuntu22.04"
 
 NIXL_COMMIT=f35faf8ba4e725f1724177d0772200481d1d3446
 NIXL_REPO=ai-dynamo/nixl.git
@@ -217,7 +217,7 @@ get_options() {
     fi
 
     if [ -z "$TAG" ]; then
-        TAG="--tag dynamo:${VERSION}-${FRAMEWORK,,}"
+        TAG="--tag dynamo:22.04-${FRAMEWORK,,}"
         if [ ! -z "${TARGET}" ]; then
             TAG="${TAG}-${TARGET}"
         fi
@@ -349,7 +349,7 @@ if [ -z "$RUN_PREFIX" ]; then
     set -x
 fi
 
-$RUN_PREFIX docker build -f $DOCKERFILE $TARGET_STR $PLATFORM $BUILD_ARGS $CACHE_FROM $CACHE_TO $TAG $LATEST_TAG $BUILD_CONTEXT_ARG $BUILD_CONTEXT $NO_CACHE
+$RUN_PREFIX docker build --network=host -f $DOCKERFILE $TARGET_STR $PLATFORM $BUILD_ARGS $CACHE_FROM $CACHE_TO $TAG $LATEST_TAG $BUILD_CONTEXT_ARG $BUILD_CONTEXT $NO_CACHE
 
 { set +x; } 2>/dev/null
 
