@@ -287,12 +287,12 @@ ARG CARGO_BUILD_JOBS
 # Set CARGO_BUILD_JOBS to 16 if not provided
 # This is to prevent cargo from building $(nproc) jobs in parallel,
 # which might exceed the number of opened files limit.
-ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-16}
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
 
 ENV CARGO_TARGET_DIR=/workspace/target
 
-RUN cargo build --release --locked --features mistralrs,sglang,vllm,python && \
-    cargo doc --no-deps && \
+RUN cargo build --release --locked --features mistralrs,sglang,vllm,python
+RUN cargo doc --no-deps && \
     cp target/release/dynamo-run /usr/local/bin && \
     cp target/release/http /usr/local/bin && \
     cp target/release/llmctl /usr/local/bin && \
@@ -340,35 +340,35 @@ COPY . /workspace
 ##########################################
 ########## Perf Analyzer Image ###########
 ##########################################
-FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS perf_analyzer
+# FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS perf_analyzer
 
-ARG GENAI_PERF_TAG
+# ARG GENAI_PERF_TAG
 
-WORKDIR /workspace
+# WORKDIR /workspace
 
-# Build and install Perf Analyzer for benchmarking
-RUN apt-get update -y && apt-get -y install cmake g++ libssl-dev python3 rapidjson-dev zlib1g-dev
-RUN git clone https://github.com/triton-inference-server/perf_analyzer.git
-RUN git -C perf_analyzer checkout ${GENAI_PERF_TAG}
-RUN mkdir perf_analyzer/build
-RUN cmake -B perf_analyzer/build -S perf_analyzer -D TRITON_ENABLE_PERF_ANALYZER_OPENAI=ON
-RUN cmake --build perf_analyzer/build -- -j8
-RUN mkdir bin &&  \
-    cp -r perf_analyzer/build/perf_analyzer/src/perf-analyzer-build /workspace/bin/
+# # Build and install Perf Analyzer for benchmarking
+# RUN apt-get update -y && apt-get -y install cmake g++ libssl-dev python3 rapidjson-dev zlib1g-dev
+# RUN git clone https://github.com/triton-inference-server/perf_analyzer.git
+# RUN git -C perf_analyzer checkout ${GENAI_PERF_TAG}
+# RUN mkdir perf_analyzer/build
+# RUN cmake -B perf_analyzer/build -S perf_analyzer -D TRITON_ENABLE_PERF_ANALYZER_OPENAI=ON
+# RUN cmake --build perf_analyzer/build -- -j8
+# RUN mkdir bin &&  \
+#     cp -r perf_analyzer/build/perf_analyzer/src/perf-analyzer-build /workspace/bin/
 
 ########################################
 ########## Development Image ###########
 ########################################
 FROM build AS dev
 
-ARG GENAI_PERF_TAG
+# ARG GENAI_PERF_TAG
 
-COPY --from=perf_analyzer /workspace/bin/perf-analyzer-build/ /perf/bin
-COPY --from=perf_analyzer /workspace/perf_analyzer /perf_analyzer
-ENV PATH="/perf/bin:${PATH}"
+# COPY --from=perf_analyzer /workspace/bin/perf-analyzer-build/ /perf/bin
+# COPY --from=perf_analyzer /workspace/perf_analyzer /perf_analyzer
+# ENV PATH="/perf/bin:${PATH}"
 
-# Install genai-perf for benchmarking
-RUN uv pip install "git+https://github.com/triton-inference-server/perf_analyzer.git@${GENAI_PERF_TAG}#subdirectory=genai-perf"
+# # Install genai-perf for benchmarking
+# RUN uv pip install "git+https://github.com/triton-inference-server/perf_analyzer.git@${GENAI_PERF_TAG}#subdirectory=genai-perf"
 RUN uv pip uninstall tritonclient
 
 COPY . /workspace
@@ -392,7 +392,7 @@ ENV LD_LIBRARY_PATH=/usr/local/nixl/lib/aarch64-linux-gnu/:$LD_LIBRARY_PATH
 ENV PYTHONPATH=/usr/local/nixl/lib/python3/dist-packages/:/opt/nixl/test/python/:$PYTHONPATH
 
 # Setup the python environment
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.6.11 /uv /uvx /bin/
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-dev && \
     rm -rf /var/lib/apt/lists/* && \
