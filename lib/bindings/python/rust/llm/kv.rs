@@ -17,7 +17,10 @@ use std::collections::HashMap;
 
 use super::*;
 use llm_rs::kv_router::indexer::KvIndexerInterface;
+use rs::traits::events::EventSubscriber;
 use tracing;
+
+use llm_rs::kv_router::{indexer::compute_block_hash_for_seq, protocols::*};
 
 #[pyclass]
 pub(crate) struct KvRouter {
@@ -27,17 +30,13 @@ pub(crate) struct KvRouter {
 #[pymethods]
 impl KvRouter {
     #[new]
-    // [FXIME] 'drt' can be obtained from 'component'
-    fn new(drt: DistributedRuntime, component: Component, kv_block_size: usize) -> PyResult<Self> {
+    fn new(component: Component, kv_block_size: usize) -> PyResult<Self> {
         let runtime = pyo3_async_runtimes::tokio::get_runtime();
         runtime.block_on(async {
-            let inner = llm_rs::kv_router::KvRouter::from_runtime(
-                drt.inner.clone(),
-                component.inner.clone(),
-                kv_block_size,
-            )
-            .await
-            .map_err(to_pyerr)?;
+            let inner =
+                llm_rs::kv_router::KvRouter::new(component.inner.clone(), kv_block_size, None)
+                    .await
+                    .map_err(to_pyerr)?;
             Ok(Self { inner })
         })
     }
@@ -120,6 +119,114 @@ impl KvMetricsPublisher {
 }
 
 #[pyclass]
+pub(crate) struct KvEventPublisher {
+    inner: Arc<llm_rs::kv_router::publisher::KvEventPublisher>,
+    warning_count: u32,
+}
+
+#[pymethods]
+impl KvEventPublisher {
+    #[new]
+    fn new(component: Component, worker_id: i64, kv_block_size: usize) -> PyResult<Self> {
+        let inner = llm_rs::kv_router::publisher::KvEventPublisher::new(
+            component.inner.clone(),
+            worker_id,
+            kv_block_size,
+        )
+        .map_err(to_pyerr)?;
+        Ok(Self {
+            inner: inner.into(),
+            warning_count: 0,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (event_id, token_ids, num_block_tokens, block_hashes, lora_id, parent_hash=None))]
+    fn publish_stored(
+        &mut self,
+        _py: Python,
+        event_id: u64,
+        token_ids: Vec<u32>,
+        num_block_tokens: Vec<u64>,
+        block_hashes: Vec<u64>,
+        lora_id: u64,
+        parent_hash: Option<u64>,
+    ) -> PyResult<()> {
+        let event = KvCacheEvent {
+            event_id,
+            data: KvCacheEventData::Stored(KvCacheStoreData {
+                parent_hash: parent_hash.map(ExternalSequenceBlockHash),
+                blocks: self.create_stored_blocks(
+                    &token_ids,
+                    &num_block_tokens,
+                    &block_hashes,
+                    lora_id,
+                ),
+            }),
+        };
+
+        self.inner.publish(event).map_err(to_pyerr)
+    }
+
+    fn publish_removed(&self, _py: Python, event_id: u64, block_hashes: Vec<u64>) -> PyResult<()> {
+        let block_hashes: Vec<ExternalSequenceBlockHash> = block_hashes
+            .iter()
+            .map(|&v| ExternalSequenceBlockHash(v))
+            .collect();
+        let event = KvCacheEvent {
+            event_id,
+            data: KvCacheEventData::Removed(KvCacheRemoveData { block_hashes }),
+        };
+
+        self.inner.publish(event).map_err(to_pyerr)
+    }
+}
+
+impl KvEventPublisher {
+    fn create_stored_block_from_parts(
+        &self,
+        block_hash: u64,
+        token_ids: &[u32],
+        _lora_id: u64,
+    ) -> KvCacheStoredBlockData {
+        let tokens_hash = compute_block_hash_for_seq(token_ids, self.inner.kv_block_size())[0];
+        KvCacheStoredBlockData {
+            block_hash: ExternalSequenceBlockHash(block_hash),
+            tokens_hash,
+        }
+    }
+
+    fn create_stored_blocks(
+        &mut self,
+        token_ids: &[u32],
+        num_block_tokens: &[u64],
+        block_hashes: &[u64],
+        lora_id: u64,
+    ) -> Vec<KvCacheStoredBlockData> {
+        let mut blocks: Vec<KvCacheStoredBlockData> = Vec::new();
+
+        let mut token_offset: usize = 0;
+        for (num_tokens_it, block_hash_it) in num_block_tokens.iter().zip(block_hashes.iter()) {
+            if (self.warning_count < 3) && (*num_tokens_it != self.inner.kv_block_size() as u64) {
+                tracing::warn!(
+                    "Block not published. Block size must be {} tokens to be published. Block size is: {}",
+                    self.inner.kv_block_size(),
+                    *num_tokens_it
+                );
+                self.warning_count += 1;
+                break;
+            }
+
+            let tokens = &token_ids[token_offset..(token_offset + *num_tokens_it as usize)];
+            blocks.push(self.create_stored_block_from_parts(*block_hash_it, tokens, lora_id));
+            token_offset += *num_tokens_it as usize;
+        }
+
+        blocks
+    }
+}
+
+#[pyclass]
 #[derive(Clone)]
 pub(crate) struct OverlapScores {
     inner: llm_rs::kv_router::indexer::OverlapScores,
@@ -149,21 +256,17 @@ impl KvIndexer {
     fn new(component: Component, kv_block_size: usize) -> PyResult<Self> {
         let runtime = pyo3_async_runtimes::tokio::get_runtime();
         runtime.block_on(async {
-            let kv_subject = component
-                .inner
-                .event_subject(llm_rs::kv_router::KV_EVENT_SUBJECT);
             let inner: Arc<llm_rs::kv_router::indexer::KvIndexer> =
                 llm_rs::kv_router::indexer::KvIndexer::new(
                     component.inner.drt().runtime().child_token(),
                     kv_block_size,
                 )
                 .into();
+            // [gluo TODO] try subscribe_with_type::<RouterEvent>,
+            // error checking below will be different.
             let mut kv_events_rx = component
                 .inner
-                .drt()
-                .nats_client()
-                .client()
-                .subscribe(kv_subject)
+                .subscribe(llm_rs::kv_router::KV_EVENT_SUBJECT)
                 .await
                 .map_err(to_pyerr)?;
             let kv_events_tx = inner.event_sender();
@@ -269,8 +372,8 @@ impl KvMetricsAggregator {
         let endpoint_kv_metrics = endpoints
             .endpoints
             .iter()
-            .map(|x| EndpointKvMetrics {
-                worker_id: x.worker_id(),
+            .map(|(worker_id, x)| EndpointKvMetrics {
+                worker_id: *worker_id,
                 request_active_slots: x.data.request_active_slots,
                 request_total_slots: x.data.request_total_slots,
                 kv_active_blocks: x.data.kv_active_blocks,
@@ -287,5 +390,124 @@ impl KvMetricsAggregator {
                 load_std: endpoints.load_std,
             })
         })
+    }
+}
+
+#[pyclass]
+pub(crate) struct KvRecorder {
+    inner: Arc<llm_rs::kv_router::recorder::KvRecorder>,
+}
+
+#[pymethods]
+impl KvRecorder {
+    #[new]
+    #[pyo3(signature = (component, output_path=None, max_lines_per_file=None, max_count=None, max_time=None))]
+    fn new(
+        component: Component,
+        output_path: Option<String>,
+        max_lines_per_file: Option<usize>,
+        max_count: Option<usize>,
+        max_time: Option<f64>,
+    ) -> PyResult<Self> {
+        let runtime = pyo3_async_runtimes::tokio::get_runtime();
+        runtime.block_on(async {
+            let token = component.inner.drt().runtime().child_token();
+
+            // Create a temp path if none provided
+            let path = match output_path {
+                Some(p) => p,
+                None => {
+                    let temp_dir = std::env::temp_dir();
+                    temp_dir
+                        .join("kv_events.jsonl")
+                        .to_string_lossy()
+                        .to_string()
+                }
+            };
+
+            let inner = llm_rs::kv_router::recorder::KvRecorder::new(
+                token.clone(),
+                path,
+                max_lines_per_file,
+                max_count,
+                max_time,
+            )
+            .await
+            .map_err(to_pyerr)?;
+
+            // Subscribe to KV events
+            let mut kv_events_rx = component
+                .inner
+                .subscribe(llm_rs::kv_router::KV_EVENT_SUBJECT)
+                .await
+                .map_err(to_pyerr)?;
+            let event_tx = inner.event_sender();
+
+            // Spawn a task to forward events to the recorder
+            tokio::spawn(async move {
+                while let Some(event) = kv_events_rx.next().await {
+                    let event: llm_rs::kv_router::indexer::RouterEvent =
+                        serde_json::from_slice(&event.payload).unwrap();
+                    tracing::debug!("KvRecorder received kv event: {:?}", event);
+                    if let Err(e) = event_tx.send(event).await {
+                        tracing::trace!(
+                            "KvRecorder failed to send kv event; shutting down: {:?}",
+                            e
+                        );
+                    }
+                }
+            });
+
+            Ok(Self {
+                inner: Arc::new(inner),
+            })
+        })
+    }
+
+    fn event_count<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let recorder = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let count = recorder.event_count().await;
+            Ok(count)
+        })
+    }
+
+    fn elapsed_time<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let recorder = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            match recorder.elapsed_time().await {
+                Ok(elapsed) => Ok(elapsed.as_secs_f64()),
+                Err(_) => Ok(0.0), // Return 0.0 when no events have been received yet
+            }
+        })
+    }
+
+    #[pyo3(signature = (indexer, timed=false, max_count=None, max_time=None))]
+    fn replay_events<'py>(
+        &self,
+        py: Python<'py>,
+        indexer: &KvIndexer,
+        timed: bool,
+        max_count: Option<usize>,
+        max_time: Option<f64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let event_tx = indexer.inner.event_sender();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let count = llm_rs::kv_router::recorder::KvRecorder::send_events(
+                "dummy_path", // This doesn't matter as we'll use the provided event_tx
+                &event_tx,
+                timed,
+                max_count,
+                max_time,
+            )
+            .await
+            .map_err(to_pyerr)?;
+            Ok(count)
+        })
+    }
+
+    fn shutdown(&self) -> PyResult<()> {
+        self.inner.shutdown();
+        Ok(())
     }
 }

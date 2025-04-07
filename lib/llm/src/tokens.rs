@@ -35,6 +35,12 @@ impl AsRef<[Token]> for Tokens {
     }
 }
 
+impl AsMut<[Token]> for Tokens {
+    fn as_mut(&mut self) -> &mut [Token] {
+        &mut self.0
+    }
+}
+
 impl std::ops::Deref for Tokens {
     type Target = [Token];
 
@@ -43,9 +49,25 @@ impl std::ops::Deref for Tokens {
     }
 }
 
+impl std::ops::DerefMut for Tokens {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl std::borrow::Borrow<[Token]> for Tokens {
     fn borrow(&self) -> &[Token] {
         &self.0
+    }
+}
+
+impl IntoIterator for Tokens {
+    type Item = Token;
+
+    type IntoIter = std::vec::IntoIter<Token>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
     }
 }
 
@@ -82,6 +104,13 @@ impl From<Tokens> for Vec<Token> {
 impl Tokens {
     pub fn into_sequence(self, block_size: usize) -> TokenSequence {
         TokenSequence::new(self, block_size)
+    }
+
+    pub fn compute_block_hash(tokens: &[Token], block_size: usize) -> Vec<BlockHash> {
+        tokens
+            .par_chunks_exact(block_size)
+            .map(|chunk| compute_hash(cast_slice(chunk)))
+            .collect()
     }
 }
 

@@ -43,7 +43,7 @@ PYTHON_PACKAGE_VERSION=${current_tag:-$latest_tag.dev+$commit_id}
 # dependencies are specified in the /container/deps folder and
 # installed within framework specific sections of the Dockerfile.
 
-declare -A FRAMEWORKS=(["VLLM"]=1 ["TENSORRTLLM"]=2)
+declare -A FRAMEWORKS=(["VLLM"]=1 ["TENSORRTLLM"]=2 ["NONE"]=3)
 DEFAULT_FRAMEWORK=VLLM
 
 SOURCE_DIR=$(dirname "$(readlink -f "$0")")
@@ -51,16 +51,17 @@ DOCKERFILE=${SOURCE_DIR}/Dockerfile
 BUILD_CONTEXT=$(dirname "$(readlink -f "$SOURCE_DIR")")
 
 # Base Images
-TENSORRTLLM_BASE_VERSION=25.01
-# FIXME: Need a public image for public consumption
-TENSORRTLLM_BASE_IMAGE="gitlab-master.nvidia.com:5005/dl/dgx/tritonserver/tensorrt-llm/amd64"
-TENSORRTLLM_BASE_IMAGE_TAG=krish-fix-trtllm-build.23766174
+TENSORRTLLM_BASE_IMAGE=tensorrt_llm/release
+TENSORRTLLM_BASE_IMAGE_TAG=latest
 TENSORRTLLM_PIP_WHEEL_PATH=""
 
 VLLM_BASE_IMAGE="nvcr.io/nvidia/cuda-dl-base"
 VLLM_BASE_IMAGE_TAG="25.01-cuda12.8-devel-ubuntu24.04"
 
-NIXL_COMMIT=d7a2c571a60d76a3d6c8458140eaaa5025fa48c4
+NONE_BASE_IMAGE="ubuntu"
+NONE_BASE_IMAGE_TAG="24.04"
+
+NIXL_COMMIT=f35faf8ba4e725f1724177d0772200481d1d3446
 NIXL_REPO=ai-dynamo/nixl.git
 
 get_options() {
@@ -218,7 +219,7 @@ get_options() {
 
     if [ -z "$TAG" ]; then
         TAG="--tag dynamo:${VERSION}-${FRAMEWORK,,}"
-        if [ ! -z ${TARGET} ]; then
+        if [ ! -z "${TARGET}" ]; then
             TAG="${TAG}-${TARGET}"
         fi
     fi
@@ -229,6 +230,8 @@ get_options() {
 
     if [ ! -z "$TARGET" ]; then
         TARGET_STR="--target ${TARGET}"
+    else
+        TARGET_STR="--target dev"
     fi
 }
 
@@ -281,31 +284,39 @@ if [[ $FRAMEWORK == "VLLM" ]]; then
     DOCKERFILE=${SOURCE_DIR}/Dockerfile.vllm
 elif [[ $FRAMEWORK == "TENSORRTLLM" ]]; then
     DOCKERFILE=${SOURCE_DIR}/Dockerfile.tensorrt_llm
+elif [[ $FRAMEWORK == "NONE" ]]; then
+    DOCKERFILE=${SOURCE_DIR}/Dockerfile.none
 fi
 
 if [[ $FRAMEWORK == "VLLM" ]]; then
-    TEMP_DIR=$(mktemp -d)
-
-    # Clean up temp directory on script exit
-    trap 'rm -rf "$TEMP_DIR"' EXIT
+    NIXL_DIR="/tmp/nixl/nixl_src"
 
     # Clone original NIXL to temp directory
-
-    if [ ! -z ${GITHUB_TOKEN} ]; then
-        git clone https://oauth2:${GITHUB_TOKEN}@github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"
+    if [ -d "$NIXL_DIR" ]; then
+        echo "Warning: $NIXL_DIR already exists, skipping clone"
     else
-        # Try HTTPS first with credential prompting disabled, fall back to SSH if it fails
-        if ! GIT_TERMINAL_PROMPT=0 git clone https://github.com/${NIXL_REPO} "$TEMP_DIR/nixl_src"; then
-            echo "HTTPS clone failed, falling back to SSH..."
-            git clone git@github.com:${NIXL_REPO} "$TEMP_DIR/nixl_src"
+        if [ ! -z ${GITHUB_TOKEN} ]; then
+            git clone https://oauth2:${GITHUB_TOKEN}@github.com/${NIXL_REPO} "$NIXL_DIR"
+        else
+            # Try HTTPS first with credential prompting disabled, fall back to SSH if it fails
+            if ! GIT_TERMINAL_PROMPT=0 git clone https://github.com/${NIXL_REPO} "$NIXL_DIR"; then
+                echo "HTTPS clone failed, falling back to SSH..."
+                git clone git@github.com:${NIXL_REPO} "$NIXL_DIR"
+            fi
         fi
     fi
 
-    cd "$TEMP_DIR/nixl_src"
+    cd "$NIXL_DIR"
+    if ! git checkout ${NIXL_COMMIT}; then
+        echo "ERROR: Failed to checkout NIXL commit ${NIXL_COMMIT}. The cached directory may be out of date."
+        echo "Please delete $NIXL_DIR and re-run the build script."
+        exit 1
+    fi
 
-    git checkout ${NIXL_COMMIT}
+    BUILD_CONTEXT_ARG+=" --build-context nixl=$NIXL_DIR"
 
-    BUILD_CONTEXT_ARG+=" --build-context nixl=$TEMP_DIR/nixl_src"
+    # Add NIXL_COMMIT as a build argument to enable caching
+    BUILD_ARGS+=" --build-arg NIXL_COMMIT=${NIXL_COMMIT} "
 fi
 
 # BUILD DEV IMAGE
@@ -341,7 +352,20 @@ if [ -z "$RUN_PREFIX" ]; then
     set -x
 fi
 
-$RUN_PREFIX docker buildx build -f $DOCKERFILE $TARGET_STR $PLATFORM $BUILD_ARGS $CACHE_FROM $CACHE_TO --output type=docker $TAG $LATEST_TAG $BUILD_CONTEXT_ARG $BUILD_CONTEXT $NO_CACHE
+# Check if the TensorRT-LLM base image exists
+if [[ $FRAMEWORK == "TENSORRTLLM" ]]; then
+    if docker inspect --type=image "$BASE_IMAGE:$BASE_IMAGE_TAG" > /dev/null 2>&1; then
+        echo "Image '$BASE_IMAGE:$BASE_IMAGE_TAG' is found."
+    else
+        echo "Image '$BASE_IMAGE:$BASE_IMAGE_TAG' is not found." >&2
+        echo "Please build the TensorRT-LLM base image first. Run ./build_trtllm_base_image.sh" >&2
+        echo "or use --base-image and --base-image-tag to an existing TensorRT-LLM base image." >&2
+        echo "See https://nvidia.github.io/TensorRT-LLM/installation/build-from-source-linux.html for more information." >&2
+        exit 1
+    fi
+fi
+
+$RUN_PREFIX docker build -f $DOCKERFILE $TARGET_STR $PLATFORM $BUILD_ARGS $CACHE_FROM $CACHE_TO $TAG $LATEST_TAG $BUILD_CONTEXT_ARG $BUILD_CONTEXT $NO_CACHE
 
 { set +x; } 2>/dev/null
 

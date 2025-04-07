@@ -15,6 +15,12 @@
 
 from typing import AsyncGenerator, AsyncIterator, Callable, Dict, List, Optional
 
+def log_message(level: str, message: str, module: str, file: str, line: int) -> None:
+    """
+    Log a message from Python with file and line info
+    """
+    ...
+
 class JsonLike:
     """
     Any PyObject which can be serialized to JSON
@@ -37,9 +43,9 @@ class DistributedRuntime:
         """
         ...
 
-    def etcd_client(self) -> EtcdClient:
+    def etcd_client(self) -> Optional[EtcdClient]:
         """
-        Get the `EtcdClient` object
+        Get the `EtcdClient` object. Not available for static workers.
         """
         ...
 
@@ -47,13 +53,18 @@ class EtcdClient:
     """
     Etcd is used for discovery in the DistributedRuntime
     """
-    async def kv_create_or_validate(self, key: str, value: bytes, lease_id: Optional[int] = None) -> None:
+
+    async def kv_create_or_validate(
+        self, key: str, value: bytes, lease_id: Optional[int] = None
+    ) -> None:
         """
         Atomically create a key if it does not exist, or validate the values are identical if the key exists.
         """
         ...
 
-    async def kv_put(self, key: str, value: bytes, lease_id: Optional[int] = None) -> None:
+    async def kv_put(
+        self, key: str, value: bytes, lease_id: Optional[int] = None
+    ) -> None:
         """
         Put a key-value pair into etcd
         """
@@ -94,12 +105,6 @@ class Component:
     def endpoint(self, name: str) -> Endpoint:
         """
         Create an endpoint
-        """
-        ...
-
-    def event_subject(self, name: str) -> str:
-        """
-        Create an event subject
         """
         ...
 
@@ -179,7 +184,12 @@ class DisaggregatedRouter:
     sequence length thresholds.
     """
 
-    def __init__(self, drt: DistributedRuntime, model_name: str, default_max_local_prefill_length: int) -> None:
+    def __init__(
+        self,
+        drt: DistributedRuntime,
+        model_name: str,
+        default_max_local_prefill_length: int,
+    ) -> None:
         """
         Create a `DisaggregatedRouter` object.
 
@@ -239,31 +249,30 @@ class KvMetricsPublisher:
         this method will interact with KV router of the same component.
         """
 
-    def publish(self, request_active_slots: int,
+    def publish(
+        self,
+        request_active_slots: int,
         request_total_slots: int,
         kv_active_blocks: int,
         kv_total_blocks: int,
-        num_requests_waiting: int,
-        gpu_cache_usage_perc: float,
-        gpu_prefix_cache_hit_rate: float
     ) -> None:
         """
         Update the KV metrics being reported.
         """
         ...
 
-
 class ModelDeploymentCard:
     """
     A model deployment card is a collection of model information
     """
-    ...
 
+    ...
 
 class OAIChatPreprocessor:
     """
     A preprocessor for OpenAI chat completions
     """
+
     ...
 
     async def start(self) -> None:
@@ -272,12 +281,12 @@ class OAIChatPreprocessor:
         """
         ...
 
-
 class Backend:
     """
     LLM Backend engine manages resources and concurrency for executing inference
     requests in LLM engines (trtllm, vllm, sglang etc)
     """
+
     ...
 
     async def start(self, handler: RequestHandler) -> None:
@@ -285,7 +294,6 @@ class Backend:
         Start the backend engine and requests to the downstream LLM engine
         """
         ...
-
 
 class OverlapScores:
     """
@@ -307,7 +315,9 @@ class KvIndexer:
         Create a `KvIndexer` object
         """
 
-    def find_matches_for_request(self, token_ids: List[int], lora_id: int) -> OverlapScores:
+    def find_matches_for_request(
+        self, token_ids: List[int], lora_id: int
+    ) -> OverlapScores:
         """
         Return the overlapping scores of workers for the given token ids.
         """
@@ -316,6 +326,79 @@ class KvIndexer:
     def block_size(self) -> int:
         """
         Return the block size of the KV Indexer.
+        """
+        ...
+
+class KvRecorder:
+    """
+    A recorder for KV Router events.
+    """
+
+    ...
+
+    def __init__(
+        self,
+        component: Component,
+        output_path: Optional[str] = None,
+        max_lines_per_file: Optional[int] = None,
+        max_count: Optional[int] = None,
+        max_time: Optional[float] = None,
+    ) -> None:
+        """
+        Create a new KvRecorder instance.
+
+        Args:
+            component: The component to associate with this recorder
+            output_path: Path to the JSONL file to write events to
+            max_lines_per_file: Maximum number of lines per file before rotating to a new file
+            max_count: Maximum number of events to record before shutting down
+            max_time: Maximum duration in seconds to record before shutting down
+        """
+        ...
+
+    def event_count(self) -> int:
+        """
+        Get the count of recorded events.
+
+        Returns:
+            The number of events recorded
+        """
+        ...
+
+    def elapsed_time(self) -> float:
+        """
+        Get the elapsed time since the recorder was started.
+
+        Returns:
+            The elapsed time in seconds as a float
+        """
+        ...
+
+    def replay_events(
+        self,
+        indexer: KvIndexer,
+        timed: bool = False,
+        max_count: Optional[int] = None,
+        max_time: Optional[float] = None,
+    ) -> int:
+        """
+        Populate an indexer with the recorded events.
+
+        Args:
+            indexer: The KvIndexer to populate with events
+            timed: If true, events will be sent according to their recorded timestamps.
+                If false, events will be sent without any delay in between.
+            max_count: Maximum number of events to send before stopping
+            max_time: Maximum duration in seconds to send events before stopping
+
+        Returns:
+            The number of events sent to the indexer
+        """
+        ...
+
+    def shutdown(self) -> None:
+        """
+        Shutdown the recorder.
         """
         ...
 
@@ -344,17 +427,54 @@ class KvMetricsAggregator:
         """
         ...
 
+class KvEventPublisher:
+    """
+    A KV event publisher will publish KV events corresponding to the component.
+    """
+
+    ...
+
+    def __init__(
+        self, component: Component, worker_id: int, kv_block_size: int
+    ) -> None:
+        """
+        Create a `KvEventPublisher` object
+        """
+
+    def publish_stored(
+        self,
+        event_id,
+        int,
+        token_ids: List[int],
+        num_block_tokens: List[int],
+        block_hashes: List[int],
+        lora_id: int,
+        parent_hash: Optional[int] = None,
+    ) -> None:
+        """
+        Publish a KV stored event.
+        """
+        ...
+
+    def publish_removed(self, event_id, int, block_hashes: List[int]) -> None:
+        """
+        Publish a KV removed event.
+        """
+        ...
 
 class HttpService:
     """
     A HTTP service for dynamo applications.
     It is a OpenAI compatible http ingress into the Dynamo Distributed Runtime.
     """
+
     ...
+
 class HttpError:
     """
     An error that occurred in the HTTP service
     """
+
     ...
 
 class HttpAsyncEngine:
@@ -363,4 +483,5 @@ class HttpAsyncEngine:
     python based AsyncEngine that handles HttpError exceptions from Python and
     converts them to the Rust version of HttpError
     """
+
     ...

@@ -1,3 +1,4 @@
+#  SPDX-FileCopyrightText: Copyright (c) 2020 Atalaya Tech. Inc
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 #  #
@@ -12,6 +13,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+#  Modifications Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES
 
 from __future__ import annotations
 
@@ -26,9 +28,11 @@ import typing as t
 from typing import Any
 
 import click
+import uvloop
 
 from dynamo.runtime import DistributedRuntime, dynamo_endpoint, dynamo_worker
 from dynamo.sdk import dynamo_context
+from dynamo.sdk.lib.service import LinkedServices
 
 logger = logging.getLogger("dynamo.sdk.serve.dynamo")
 logger.setLevel(logging.INFO)
@@ -99,6 +103,8 @@ def main(
             t.cast(t.Dict[str, str], json.loads(runner_map))
         )
 
+    # TODO: test this with a deep chain of services
+    LinkedServices.remove_unused_edges()
     # Check if Dynamo is enabled for this service
     if service.is_dynamo_component():
         if worker_id is not None:
@@ -166,7 +172,7 @@ def main(
                         logger.info(f"[{run_id}] Running startup hook: {name}")
                         result = getattr(class_instance, name)()
                         if inspect.isawaitable(result):
-                            # await on startup hook async_onstart
+                            # await on startup hook async_on_start
                             await result
                             logger.info(
                                 f"[{run_id}] Completed async startup hook: {name}"
@@ -183,6 +189,7 @@ def main(
                 logger.error(f"[{run_id}] Error in Dynamo component setup: {str(e)}")
                 raise
 
+        uvloop.install()
         asyncio.run(worker())
 
 

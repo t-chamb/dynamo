@@ -1,3 +1,4 @@
+#  SPDX-FileCopyrightText: Copyright (c) 2020 Atalaya Tech. Inc
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 #  #
@@ -12,6 +13,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+#  Modifications Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES
 
 from __future__ import annotations
 
@@ -36,8 +38,7 @@ from circus.sockets import CircusSocket
 from circus.watcher import Watcher
 from simple_di import Provide, inject
 
-if t.TYPE_CHECKING:
-    from _bentoml_impl.server.allocator import ResourceAllocator
+from .allocator import ResourceAllocator
 
 
 # Define a Protocol for services to ensure type safety
@@ -128,7 +129,7 @@ def create_dependency_watcher(
 ) -> tuple[Watcher, CircusSocket, str]:
     from bentoml.serving import create_watcher
 
-    num_workers, worker_envs = scheduler.get_worker_env(svc)
+    num_workers, resource_envs = scheduler.get_resource_envs(svc)
     uri, socket = _get_server_socket(svc, uds_path, port_stack, backlog)
     args = [
         "-m",
@@ -142,8 +143,8 @@ def create_dependency_watcher(
         "$(CIRCUS.WID)",
     ]
 
-    if worker_envs:
-        args.extend(["--worker-env", json.dumps(worker_envs)])
+    if resource_envs:
+        args.extend(["--worker-env", json.dumps(resource_envs)])
 
     watcher = create_watcher(
         name=f"service_{svc.name}",
@@ -172,7 +173,7 @@ def create_dynamo_watcher(
     uri, socket = _get_server_socket(svc, uds_path, port_stack, backlog)
 
     # Get worker configuration
-    num_workers, worker_envs = scheduler.get_worker_env(svc)
+    num_workers, resource_envs = scheduler.get_resource_envs(svc)
 
     # Create Dynamo-specific worker args
     args = [
@@ -185,21 +186,37 @@ def create_dynamo_watcher(
         "$(CIRCUS.WID)",
     ]
 
-    if worker_envs:
-        args.extend(["--worker-env", json.dumps(worker_envs)])
+    if resource_envs:
+        args.extend(["--worker-env", json.dumps(resource_envs)])
 
-    # Update env to include ServiceConfig
+    # Update env to include ServiceConfig and service-specific environment variables
     worker_env = env.copy() if env else {}
+
+    # Pass through the main service config
     if "DYNAMO_SERVICE_CONFIG" in os.environ:
         worker_env["DYNAMO_SERVICE_CONFIG"] = os.environ["DYNAMO_SERVICE_CONFIG"]
 
-    # Create the watcher with dependency map in environment
+    # Get service-specific environment variables from DYNAMO_SERVICE_ENVS
+    if "DYNAMO_SERVICE_ENVS" in os.environ:
+        try:
+            service_envs = json.loads(os.environ["DYNAMO_SERVICE_ENVS"])
+            if svc.name in service_envs:
+                service_args = service_envs[svc.name].get("ServiceArgs", {})
+                if "envs" in service_args:
+                    worker_env.update(service_args["envs"])
+                    logger.info(
+                        f"Added service-specific environment variables for {svc.name}"
+                    )
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse DYNAMO_SERVICE_ENVS: {e}")
+
+    # Create the watcher with updated environment
     watcher = create_watcher(
         name=f"dynamo_service_{svc.name}",
         args=args,
         numprocesses=num_workers,
         working_dir=working_dir,
-        env=worker_env,  # Use updated environment
+        env=worker_env,
     )
 
     return watcher, socket, uri
@@ -255,7 +272,6 @@ def serve_http(
     threaded: bool = False,
 ) -> Server:
     from _bentoml_impl.loader import import_service, normalize_identifier
-    from _bentoml_impl.server.allocator import ResourceAllocator
     from bentoml._internal.log import SERVER_LOGGING_CONFIG
     from bentoml._internal.utils import reserve_free_port
     from bentoml._internal.utils.analytics.usage_stats import track_serve
@@ -268,6 +284,8 @@ def serve_http(
         make_reload_plugin,
     )
     from circus.sockets import CircusSocket
+
+    from .allocator import ResourceAllocator
 
     bento_id: str = ""
     env = {"PROMETHEUS_MULTIPROC_DIR": ensure_prometheus_dir()}
@@ -299,7 +317,7 @@ def serve_http(
 
     if service_name and service_name != svc.name:
         svc = svc.find_dependent_by_name(service_name)
-    num_workers, worker_envs = allocator.get_worker_env(svc)
+    num_workers, resource_envs = allocator.get_resource_envs(svc)
     server_on_deployment(svc)
     uds_path = tempfile.mkdtemp(prefix="bentoml-uds-")
     try:
@@ -403,8 +421,8 @@ def serve_http(
             *timeouts_args,
             *timeout_args,
         ]
-        if worker_envs:
-            server_args.extend(["--worker-env", json.dumps(worker_envs)])
+        if resource_envs:
+            server_args.extend(["--worker-env", json.dumps(resource_envs)])
         if development_mode:
             server_args.append("--development-mode")
 
@@ -422,13 +440,37 @@ def serve_http(
                 "--worker-id",
                 "$(CIRCUS.WID)",
             ]
+            # resource_envs is the resource allocation (ie CUDA_VISIBLE_DEVICES) for each worker created by the allocator
+            # these resource_envs are passed to each individual worker's environment which is set in serve_dynamo
+            if resource_envs:
+                args.extend(["--worker-env", json.dumps(resource_envs)])
+            # env is the base bentoml environment variables. We make a copy and update it to add any service configurations and additional env vars
+            worker_env = env.copy() if env else {}
+
+            # Pass through the main service config
+            if "DYNAMO_SERVICE_CONFIG" in os.environ:
+                worker_env["DYNAMO_SERVICE_CONFIG"] = os.environ[
+                    "DYNAMO_SERVICE_CONFIG"
+                ]
+
+            # Get service-specific environment variables from DYNAMO_SERVICE_ENVS
+            if "DYNAMO_SERVICE_ENVS" in os.environ:
+                try:
+                    service_envs = json.loads(os.environ["DYNAMO_SERVICE_ENVS"])
+                    if svc.name in service_envs:
+                        service_args = service_envs[svc.name].get("ServiceArgs", {})
+                        if "envs" in service_args:
+                            worker_env.update(service_args["envs"])
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse DYNAMO_SERVICE_ENVS: {e}")
+
             watcher = create_watcher(
                 name=f"dynamo_service_{svc.name}",
                 args=args,
                 numprocesses=num_workers,
                 working_dir=str(bento_path.absolute()),
                 close_child_stdin=not development_mode,
-                env=env,  # Dependency map will be injected by serve_http
+                env=worker_env,  # Dependency map will be injected by serve_http
             )
             watchers.append(watcher)
             print(f"dynamo_service_{svc.name} entrypoint created")
@@ -478,16 +520,21 @@ def serve_http(
         arbiter.exit_stack.callback(shutil.rmtree, uds_path, ignore_errors=True)
         arbiter.start(
             cb=lambda _: logger.info(  # type: ignore
-                "Starting Dynamo Service %s (%s/%s) listening on %s://%s:%d (Press CTRL+C to quit)"
-                if (hasattr(svc, "is_dynamo_component") and svc.is_dynamo_component())
-                else 'Starting production %s BentoServer from "%s" (Press CTRL+C to quit)',
-                *(
-                    (svc.name, *svc.dynamo_address(), scheme, log_host, port)
+                (
+                    "Starting Dynamo Service %s (Press CTRL+C to quit)"
                     if (
                         hasattr(svc, "is_dynamo_component")
                         and svc.is_dynamo_component()
                     )
-                    else (scheme.upper(), bento_identifier)
+                    else "Starting %s (Press CTRL+C to quit)"
+                ),
+                *(
+                    (svc.name,)
+                    if (
+                        hasattr(svc, "is_dynamo_component")
+                        and svc.is_dynamo_component()
+                    )
+                    else (bento_identifier,)
                 ),
             ),
         )

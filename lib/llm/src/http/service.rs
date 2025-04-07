@@ -28,7 +28,7 @@
 //! TODO(): Add support for model-specific metadata and status. Status will allow us to return a 503 when the model is supposed
 //! to be ready, but there is a problem with the model.
 //!
-//! The [`service::HttpService`] can be further extended to host any [`axum::Router`] using the [`service::HttpServiceBuilder`].
+//! The [`service_v2::HttpService`] can be further extended to host any [`axum::Router`] using the [`service_v2::HttpServiceConfigBuilder`].
 
 mod openai;
 
@@ -52,6 +52,7 @@ use crate::types::openai::{
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 #[derive(Clone)]
@@ -191,6 +192,7 @@ pub struct DeploymentState {
     completion_engines: Arc<Mutex<ModelEngines<OpenAICompletionsStreamingEngine>>>,
     chat_completion_engines: Arc<Mutex<ModelEngines<OpenAIChatCompletionsStreamingEngine>>>,
     metrics: Arc<Metrics>,
+    sse_keep_alive: Option<Duration>,
 }
 
 impl DeploymentState {
@@ -199,6 +201,7 @@ impl DeploymentState {
             completion_engines: Arc::new(Mutex::new(ModelEngines::default())),
             chat_completion_engines: Arc::new(Mutex::new(ModelEngines::default())),
             metrics: Arc::new(Metrics::default()),
+            sse_keep_alive: None,
         }
     }
 

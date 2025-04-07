@@ -362,6 +362,8 @@ pub struct PrometheusMetrics {
     load_avg: prometheus::GaugeVec,
     load_std: prometheus::GaugeVec,
     // KV hit rate metrics
+    kv_hit_rate_percent: prometheus::GaugeVec,
+    // FIXME: These are currently unused outside of mock_worker
     kv_hit_rate_isl_blocks: prometheus::CounterVec,
     kv_hit_rate_overlap_blocks: prometheus::CounterVec,
 }
@@ -400,9 +402,15 @@ impl PrometheusMetrics {
                 "Load standard deviation across workers",
                 &["component", "endpoint"]
             )?,
-            // TODO: The cumulative isl/overlap metrics are monotonically increasing
-            // and may overflow at some point, we may want to periodically reset them.
-            // KV hit rate metrics
+            // KV hit rate (ForwardPassMetrics)
+            kv_hit_rate_percent: register_gauge_vec!(
+                "llm_kv_hit_rate_percent",
+                "KV hit rate percentage per worker",
+                &["component", "endpoint", "worker_id"]
+            )?,
+            // FIXME: Cleanup/remove event based metrics after finalizaing
+            //        metrics collection approach with vllm/trtllm workers.
+            // Event-based KV hit rate metrics (not currently used outside mock worker)
             kv_hit_rate_isl_blocks: register_counter_vec!(
                 "llm_kv_hit_rate_isl_blocks",
                 "Cumulative count of ISL blocks in KV hit rate events",
@@ -421,7 +429,7 @@ impl PrometheusMetrics {
         &self,
         gauge: &prometheus::GaugeVec,
         config: &LLMWorkerLoadCapacityConfig,
-        worker_id: &str,
+        worker_id: &String,
         value: f64,
     ) {
         gauge
@@ -434,7 +442,7 @@ impl PrometheusMetrics {
         &self,
         counter: &prometheus::CounterVec,
         config: &LLMWorkerLoadCapacityConfig,
-        worker_id: &str,
+        worker_id: &String,
         value: f64,
     ) {
         counter
@@ -457,8 +465,8 @@ impl PrometheusMetrics {
     /// Update metrics with current values
     fn update(&self, config: &LLMWorkerLoadCapacityConfig, processed: &ProcessedEndpoints) {
         // Update per-worker metrics
-        for endpoint in processed.endpoints.iter() {
-            let worker_id = endpoint.worker_id().to_string();
+        for (worker_id, endpoint) in processed.endpoints.iter() {
+            let worker_id = worker_id.to_string();
             let metrics = endpoint.data.clone();
 
             self.set_worker_gauge(
@@ -484,6 +492,12 @@ impl PrometheusMetrics {
                 config,
                 &worker_id,
                 metrics.request_total_slots as f64,
+            );
+            self.set_worker_gauge(
+                &self.kv_hit_rate_percent,
+                config,
+                &worker_id,
+                metrics.gpu_prefix_cache_hit_rate as f64,
             );
         }
 
@@ -541,7 +555,7 @@ impl PrometheusMetrics {
 
         if cumulative_isl > 0.0 {
             let cumulative_hit_rate = (cumulative_overlap / cumulative_isl) * 100.0;
-            tracing::info!(
+            tracing::debug!(
                 "Estimated Cumulative KV hit rate: {cumulative_hit_rate:.2}% (Overlap: {cumulative_overlap} / ISL: {cumulative_isl})"
             );
         }
@@ -563,11 +577,6 @@ pub async fn collect_endpoints(
         .filter(|e| e.subject.starts_with(subject))
         .collect::<Vec<_>>();
     tracing::debug!("Endpoints: {endpoints:?}");
-
-    if endpoints.is_empty() {
-        tracing::warn!("No endpoints found matching subject {subject}");
-    }
-
     Ok(endpoints)
 }
 

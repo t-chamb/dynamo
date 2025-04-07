@@ -13,80 +13,81 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Arc, Mutex};
-
 pub use crate::kv_router::protocols::ForwardPassMetrics;
+use crate::kv_router::KV_METRICS_ENDPOINT;
 
-use crate::kv_router::scheduler::{Endpoint, Service};
+use crate::kv_router::scheduler::Endpoint;
 use crate::kv_router::ProcessedEndpoints;
 use dynamo_runtime::component::Component;
-use std::time::Duration;
+use dynamo_runtime::{service::EndpointInfo, utils::Duration, Result};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 pub struct KvMetricsAggregator {
     pub service_name: String,
-    pub endpoints: Arc<Mutex<ProcessedEndpoints>>,
+    pub endpoints_rx: watch::Receiver<ProcessedEndpoints>,
 }
 
 impl KvMetricsAggregator {
     pub async fn new(component: Component, cancellation_token: CancellationToken) -> Self {
-        let (ep_tx, mut ep_rx) = tokio::sync::mpsc::channel(128);
+        let (watch_tx, watch_rx) = watch::channel(ProcessedEndpoints::default());
 
-        tokio::spawn(collect_endpoints(
-            component.drt().nats_client().clone(),
-            component.service_name(),
-            ep_tx,
+        tokio::spawn(collect_endpoints_task(
+            component.clone(),
+            watch_tx,
             cancellation_token.clone(),
         ));
 
-        tracing::trace!("awaiting the start of the background endpoint subscriber");
-        let endpoints = Arc::new(Mutex::new(ProcessedEndpoints::default()));
-        let endpoints_clone = endpoints.clone();
-        tokio::spawn(async move {
-            tracing::debug!("scheduler background task started");
-            loop {
-                match ep_rx.recv().await {
-                    Some(endpoints) => match endpoints_clone.lock() {
-                        Ok(mut shared_endpoint) => {
-                            *shared_endpoint = endpoints;
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to acquire lock on endpoints: {:?}", e);
-                        }
-                    },
-                    None => {
-                        tracing::warn!("endpoint subscriber shutdown");
-                        break;
-                    }
-                };
-            }
-
-            tracing::trace!("background endpoint subscriber shutting down");
-        });
         Self {
             service_name: component.service_name(),
-            endpoints,
+            endpoints_rx: watch_rx,
         }
     }
 
     pub fn get_endpoints(&self) -> ProcessedEndpoints {
-        match self.endpoints.lock() {
-            Ok(endpoints) => endpoints.clone(),
-            Err(e) => {
-                tracing::error!("Failed to acquire lock on endpoints: {:?}", e);
-                ProcessedEndpoints::default()
-            }
-        }
+        self.endpoints_rx.borrow().clone()
+    }
+
+    pub fn endpoints_watcher(&self) -> watch::Receiver<ProcessedEndpoints> {
+        self.endpoints_rx.clone()
     }
 }
 
+/// [gluo TODO] 'collect_endpoints' is from component/metrics,
+/// should consolidate these functions into generic metrics aggregator
+/// functions and shared by KvMetricsAggregator and component/metrics.
+/// Collect endpoints from a component
 pub async fn collect_endpoints(
-    nats_client: dynamo_runtime::transports::nats::Client,
-    service_name: String,
-    ep_tx: tokio::sync::mpsc::Sender<ProcessedEndpoints>,
+    component: &Component,
+    subject: &str,
+    timeout: Duration,
+) -> Result<Vec<EndpointInfo>> {
+    // Collect stats from each backend
+    let stream = component.scrape_stats(timeout).await?;
+
+    // Filter the stats by the service subject
+    let endpoints = stream
+        .into_endpoints()
+        .filter(|e| e.subject.starts_with(subject))
+        .collect::<Vec<_>>();
+    tracing::debug!("Endpoints: {endpoints:?}");
+
+    if endpoints.is_empty() {
+        tracing::warn!("No endpoints found matching subject {subject}");
+    }
+
+    Ok(endpoints)
+}
+
+pub async fn collect_endpoints_task(
+    component: Component,
+    watch_tx: watch::Sender<ProcessedEndpoints>,
     cancel: CancellationToken,
 ) {
     let backoff_delay = Duration::from_millis(100);
+    let scrape_timeout = Duration::from_millis(300);
+    let endpoint = component.endpoint(KV_METRICS_ENDPOINT);
+    let service_subject = endpoint.subject();
 
     loop {
         tokio::select! {
@@ -95,52 +96,46 @@ pub async fn collect_endpoints(
                 break;
             }
             _ = tokio::time::sleep(backoff_delay) => {
-                tracing::trace!("collecting endpoints for service: {}", service_name);
-                let values = match nats_client
-                    .get_endpoints(&service_name, Duration::from_millis(300))
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!("Failed to retrieve endpoints for {}: {:?}", service_name, e);
-                        continue;
-                    }
-                };
-
-                tracing::debug!("values: {:?}", values);
-                let services: Vec<Service> = values
-                    .into_iter()
-                    .filter(|v| !v.is_empty())
-                    .filter_map(|v| match serde_json::from_slice::<Service>(&v) {
-                        Ok(service) => Some(service),
+                tracing::trace!("collecting endpoints for service: {}", service_subject);
+                let unfiltered_endpoints =
+                    match collect_endpoints(&component, &service_subject, scrape_timeout).await
+                    {
+                        Ok(v) => v,
                         Err(e) => {
-                            tracing::warn!("For value: {:?} \nFailed to parse service: {:?}", v, e);
-                            None
+                            tracing::warn!("Failed to retrieve endpoints for {}: {:?}", service_subject, e);
+                            continue;
                         }
-                    })
-                    .collect();
-                tracing::debug!("services: {:?}", services);
+                    };
+                tracing::debug!("unfiltered endpoints: {:?}", unfiltered_endpoints);
 
-                let endpoints: Vec<Endpoint> = services
+                let endpoints: Vec<Endpoint> = unfiltered_endpoints
                     .into_iter()
-                    .flat_map(|s| s.endpoints)
                     .filter(|s| s.data.is_some())
-                    .map(|s| Endpoint {
-                        name: s.name,
-                        subject: s.subject,
-                        data: s.data.unwrap(),
-                    })
+                    .filter_map(|s|
+                        match s.data.unwrap().decode::<ForwardPassMetrics>() {
+                            Ok(data) => Some(Endpoint {
+                                name: s.name,
+                                subject: s.subject,
+                                data,
+                            }),
+                            Err(e) => {
+                                tracing::debug!("skip endpoint data that can't be parsed as ForwardPassMetrics: {:?}", e);
+                                None
+                            }
+                        }
+                    )
                     .collect();
                 tracing::debug!("endpoints: {:?}", endpoints);
 
                 tracing::trace!(
                     "found {} endpoints for service: {}",
                     endpoints.len(),
-                    service_name
+                    service_subject
                 );
 
                 let processed = ProcessedEndpoints::new(endpoints);
-                if ep_tx.send(processed).await.is_err() {
+
+                if watch_tx.send(processed).is_err() {
                     tracing::trace!("failed to send processed endpoints; shutting down");
                     break;
                 }

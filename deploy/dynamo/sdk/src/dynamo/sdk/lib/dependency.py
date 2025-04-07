@@ -1,3 +1,4 @@
+#  SPDX-FileCopyrightText: Copyright (c) 2020 Atalaya Tech. Inc
 #  SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #  SPDX-License-Identifier: Apache-2.0
 #  #
@@ -12,6 +13,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+#  Modifications Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES
 
 import asyncio
 from typing import Any, Dict, Optional, TypeVar
@@ -139,7 +141,7 @@ class DynamoDependency(Dependency[T]):
         ...
         await dep.get_endpoint("generate") # equivalent to the following
         router_client = (
-            await runtime.namespace("dynamo-init")
+            await runtime.namespace("dynamo")
             .component("router")
             .endpoint("generate")
             .client()

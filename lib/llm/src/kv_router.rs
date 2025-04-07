@@ -14,90 +14,88 @@
 // limitations under the License.
 
 use anyhow::Result;
-use dynamo_runtime::{component::Component, component::Namespace, DistributedRuntime};
-use futures::stream::StreamExt;
+use dynamo_runtime::{
+    component::Component,
+    pipeline::{
+        async_trait, AsyncEngine, AsyncEngineContextProvider, Error, ManyOut, ResponseStream,
+        SingleIn,
+    },
+    prelude::*,
+    protocols::annotated::Annotated,
+};
+use futures::stream::{self, StreamExt};
 use std::sync::Arc;
-use tokio_util::sync::CancellationToken;
-use tracing;
 
 pub mod indexer;
 pub mod metrics_aggregator;
 pub mod protocols;
 pub mod publisher;
+pub mod recorder;
 pub mod scheduler;
 pub mod scoring;
 
-use crate::kv_router::{
-    indexer::{KvIndexer, KvIndexerInterface, RouterEvent},
-    metrics_aggregator::collect_endpoints,
-    scheduler::KvScheduler,
-    scoring::ProcessedEndpoints,
+use crate::{
+    kv_router::{
+        indexer::{KvIndexer, KvIndexerInterface, RouterEvent},
+        metrics_aggregator::KvMetricsAggregator,
+        protocols::{LocalBlockHash, RouterRequest, RouterResponse, WorkerSelectionResult},
+        scheduler::{KvScheduler, KvSchedulerError, SchedulingRequest},
+        scoring::ProcessedEndpoints,
+    },
+    tokens::Tokens,
 };
 
-// this should be discovered from the backend
+use dynamo_runtime::traits::events::EventSubscriber;
+
+// [gluo TODO] shouldn't need to be public
+// this should be discovered from the component
 pub const KV_EVENT_SUBJECT: &str = "kv_events";
 // this is a test change to see how sccache reacts
 pub const KV_HIT_RATE_SUBJECT: &str = "kv-hit-rate";
+pub const KV_METRICS_ENDPOINT: &str = "load_metrics";
+
+/// A trait that users can implement to define custom selection logic
+pub trait WorkerSelector {
+    fn select_worker(
+        &self,
+        workers: &ProcessedEndpoints,
+        request: &SchedulingRequest,
+        block_size: usize,
+    ) -> Result<WorkerSelectionResult, KvSchedulerError>;
+}
 
 pub struct KvRouter {
-    // properties of request plane
-    // maybe rolled up into the generic object or not
-    service_name: String,
-
-    cancellation_token: CancellationToken,
-
-    #[allow(dead_code)]
-    scheduler: KvScheduler,
-
     indexer: KvIndexer,
+    scheduler: KvScheduler,
+    block_size: usize,
 }
 
 impl KvRouter {
-    pub async fn from_runtime(
-        runtime: DistributedRuntime,
-        backend: Component,
-        kv_block_size: usize,
-    ) -> Result<Arc<Self>> {
-        let nats_client = runtime.nats_client();
-        let service_name = backend.service_name();
-        let kv_subject = backend.event_subject(KV_EVENT_SUBJECT);
-        let namespace = runtime.namespace(backend.namespace())?;
-
-        tracing::info!("Component Namespace {}", backend.namespace());
-        tracing::info!("Component Service Name {}", service_name);
-        tracing::info!("KV Subject {}", kv_subject);
-        Self::new(
-            nats_client,
-            service_name,
-            kv_subject,
-            namespace,
-            kv_block_size,
-        )
-        .await
-    }
-
     pub async fn new(
-        nats_client: dynamo_runtime::transports::nats::Client,
-        service_name: String,
-        kv_subject: String,
-        namespace: Namespace,
-        kv_block_size: usize,
+        component: Component,
+        block_size: usize,
+        selector: Option<Box<dyn WorkerSelector + Send + Sync>>,
     ) -> Result<Arc<Self>> {
-        let cancellation_token = CancellationToken::new();
-        let (ep_tx, ep_rx) = tokio::sync::mpsc::channel(128);
+        let cancellation_token = component
+            .drt()
+            .primary_lease()
+            .expect("Cannot KV route static workers")
+            .primary_token();
 
-        tokio::spawn(collect_endpoints(
-            nats_client.clone(),
-            service_name.clone(),
-            ep_tx,
-            cancellation_token.clone(),
-        ));
+        let metrics_aggregator =
+            KvMetricsAggregator::new(component.clone(), cancellation_token.clone()).await;
+        let indexer = KvIndexer::new(cancellation_token.clone(), block_size);
+        let scheduler = KvScheduler::start(
+            component.namespace().clone(),
+            block_size,
+            metrics_aggregator.endpoints_watcher(),
+            selector,
+        )
+        .await?;
 
-        let indexer = KvIndexer::new(cancellation_token.clone(), kv_block_size);
-        let scheduler = KvScheduler::start(ep_rx, namespace, kv_block_size).await?;
-
-        tracing::debug!("subscribing to kv events: {}", kv_subject);
-        let mut kv_events_rx = nats_client.client().subscribe(kv_subject).await?;
+        // [gluo TODO] try subscribe_with_type::<RouterEvent>,
+        // error checking below will be different.
+        let mut kv_events_rx = component.subscribe(KV_EVENT_SUBJECT).await?;
         let kv_events_tx = indexer.event_sender();
 
         tokio::spawn(async move {
@@ -121,19 +119,10 @@ impl KvRouter {
         });
 
         Ok(Arc::new(Self {
-            service_name,
-            cancellation_token,
             scheduler,
             indexer,
+            block_size,
         }))
-    }
-
-    pub fn cancellation_token(&self) -> CancellationToken {
-        self.cancellation_token.clone()
-    }
-
-    pub fn service_name(&self) -> &str {
-        &self.service_name
     }
 
     // [TODO] indexer needs to take 'lora_id' as parameter
@@ -148,5 +137,34 @@ impl KvRouter {
         tracing::debug!("KV router overlap_scores: {:?}", overlap_scores);
         let worker_id = self.scheduler.schedule(overlap_scores, isl_tokens).await?;
         Ok(worker_id)
+    }
+}
+
+#[async_trait]
+impl AsyncEngine<SingleIn<RouterRequest>, ManyOut<Annotated<RouterResponse>>, Error> for KvRouter {
+    async fn generate(
+        &self,
+        request: SingleIn<RouterRequest>,
+    ) -> Result<ManyOut<Annotated<RouterResponse>>> {
+        let (request, ctx) = request.into_parts();
+        let isl_tokens = request.tokens.len();
+        let block_size = self.block_size;
+
+        // Compute the block hashes in a blocking task
+        let local_block_hashes: Vec<LocalBlockHash> = tokio::task::spawn_blocking(move || {
+            Tokens::compute_block_hash(&request.tokens, block_size)
+                .into_iter()
+                .map(LocalBlockHash)
+                .collect()
+        })
+        .await?;
+
+        let overlap_scores = self.indexer.find_matches(local_block_hashes).await?;
+        let worker_id = self.scheduler.schedule(overlap_scores, isl_tokens).await?;
+
+        let response = RouterResponse { worker_id };
+        let response = Annotated::from_data(response);
+        let stream = stream::iter(vec![response]);
+        Ok(ResponseStream::new(Box::pin(stream), ctx.context()))
     }
 }

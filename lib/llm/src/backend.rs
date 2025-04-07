@@ -52,9 +52,6 @@ use crate::protocols::{
 use crate::tokenizers::{DecodeStream, HuggingFaceTokenizer, Tokenizer};
 use tokenizers::Tokenizer as HfTokenizer;
 
-use toktrie::TokTrie;
-use toktrie_hf_tokenizers::ByteTokenizer;
-
 /// Represents the output stream from the execution engine
 pub type ExecutionOutputStream = Annotated<LLMEngineOutput>;
 
@@ -64,12 +61,8 @@ pub type ExecutionContext = ServerStreamingEngine<BackendInput, ExecutionOutputS
 /// Backend handles resource management and orchestrates LLM execution
 #[allow(dead_code)]
 pub struct Backend {
-    mdc: ModelDeploymentCard,
-    pub tokenizer: Tokenizer,        // Handles token encoding/decoding
-    tok_trie: Arc<TokTrie>,          // Efficient token lookup structure
-    eos_token_ids: Vec<TokenIdType>, // End of sequence token IDs
-    validate_engine_decode: bool,    // Enable validation of engine decoding
-    mdcsum: String,                  // Model deployment checksum
+    pub tokenizer: Tokenizer,     // Handles token encoding/decoding
+    validate_engine_decode: bool, // Enable validation of engine decoding
 }
 
 /// Internal state for managing token decoding and stream processing
@@ -78,34 +71,27 @@ struct DecoderUnfoldState {
     stream: ManyOut<ExecutionOutputStream>,
     decoder: Decoder,
     validate_engine_decode: bool,
-    mdcsum: String,
 }
 
 impl Backend {
-    pub async fn from_mdc(mdc: ModelDeploymentCard) -> Result<Arc<Self>> {
-        let info = mdc.model_info.get_model_info().await?;
-
-        let tokenizer = match &mdc.tokenizer {
-            TokenizerKind::HfTokenizerJson(file) => {
-                HfTokenizer::from_file(file).map_err(Error::msg)?
-            }
-        };
-
-        let bt = ByteTokenizer::from_tokenizer(tokenizer.clone())?;
-        let toktrie = TokTrie::from(&bt.tokrx_info(), &bt.token_bytes());
-        let mdcsum = mdc.mdcsum();
-
+    pub async fn from_tokenizer(tokenizer: HfTokenizer) -> Result<Arc<Self>> {
         let tokenizer = HuggingFaceTokenizer::from_tokenizer(tokenizer);
         let tokenizer = Tokenizer::from(Arc::new(tokenizer));
 
         Ok(Arc::new(Self {
-            mdc,
             tokenizer,
-            tok_trie: Arc::new(toktrie),
-            eos_token_ids: info.eos_token_ids(),
             validate_engine_decode: false,
-            mdcsum,
         }))
+    }
+
+    pub async fn from_mdc(mdc: ModelDeploymentCard) -> Result<Arc<Self>> {
+        let tokenizer = match &mdc.tokenizer {
+            TokenizerKind::HfTokenizerJson(file) => {
+                HfTokenizer::from_file(file).map_err(Error::msg)?
+            }
+            TokenizerKind::GGUF(t) => *t.clone(),
+        };
+        Self::from_tokenizer(tokenizer).await
     }
 
     fn decoder(
@@ -113,17 +99,12 @@ impl Backend {
         stream: ManyOut<ExecutionOutputStream>,
         stop_conditions: StopConditions,
     ) -> DecoderUnfoldState {
-        let decoder = Decoder::new(
-            self.tokenizer.decode_stream(false),
-            stop_conditions,
-            self.mdcsum.clone(),
-        );
+        let decoder = Decoder::new(self.tokenizer.decode_stream(false), stop_conditions);
 
         DecoderUnfoldState {
             stream,
             decoder,
             validate_engine_decode: self.validate_engine_decode,
-            mdcsum: self.mdcsum.clone(),
         }
     }
 }
@@ -142,16 +123,7 @@ impl
         request: SingleIn<BackendInput>,
         next: ServerStreamingEngine<BackendInput, Annotated<LLMEngineOutput>>,
     ) -> Result<ManyOut<Annotated<BackendOutput>>> {
-        // possible use the request
-        let mut stop_conditions = request.stop_conditions.clone();
-
-        // preprocessor should have set max_tokens
-        // assert!(stop_conditions.max_tokens.is_some());
-        if stop_conditions.max_tokens.is_none() {
-            log::warn!("max_tokens is not set in stop_conditions; fixme");
-            stop_conditions.max_tokens = Some(256);
-        }
-
+        let stop_conditions = request.stop_conditions.clone();
         let next_stream = next.generate(request).await?;
 
         let context = next_stream.context();
@@ -232,7 +204,7 @@ impl
         });
 
         // convert stream of processed Annotated<LLMEngineOutput> to Annotated<BackendOutput>
-        let mdcsum = self.mdcsum.clone();
+        //let mdcsum = self.mdcsum.clone();
         let stream = processed_stream.map(move |output| {
             output.map_data(|data| {
                 Ok(BackendOutput {
@@ -242,7 +214,7 @@ impl
                     cum_log_probs: data.cum_log_probs,
                     log_probs: data.log_probs,
                     finish_reason: data.finish_reason,
-                    mdcsum: mdcsum.clone(),
+                    //mdcsum: mdcsum.clone(),
                 })
             })
         });
@@ -265,9 +237,6 @@ pub struct Decoder {
     // do not trigger stop conditions until at least this many tokens have been generated
     min_tokens: u32,
 
-    // maximum number of tokens to generate - the llm engine should enforce this
-    max_tokens: u32,
-
     // single tokens that if found in the response will trigger a stop condition after the
     // minimum number of tokens have been generated
     hidden_stop_ids: HashSet<TokenIdType>,
@@ -287,9 +256,8 @@ pub struct Decoder {
 
     // the number of bytes currently jailed
     jailed_bytes: usize,
-
     // mdcsum
-    mdcsum: String,
+    //mdcsum: String,
 }
 
 #[allow(dead_code)]
@@ -343,7 +311,7 @@ impl Decoder {
     pub fn new(
         decode_stream: DecodeStream,
         stop_condition: StopConditions,
-        mdcsum: String,
+        //mdcsum: String,
     ) -> Self {
         let hidden_stop_ids: HashSet<TokenIdType> = stop_condition
             .stop_token_ids_hidden
@@ -372,12 +340,10 @@ impl Decoder {
             //visible_stop_ids: HashSet::new(),
             //visible_stop_sequences: Vec::new(),
             min_tokens: stop_condition.min_tokens.unwrap_or(0),
-            max_tokens: stop_condition.max_tokens.expect("max_tokens is required"),
             generated_tokens: 0,
             jail: String::new(),
             jail_max_bytes,
             jailed_bytes: 0,
-            mdcsum,
         }
     }
 
@@ -404,14 +370,6 @@ impl Decoder {
             return Ok(StepResult::with_stop_trigger(
                 token,
                 StopTrigger::HiddenStopTokenDetected(token_id),
-            ));
-        }
-
-        // next check max_tokens limit
-        if self.generated_tokens >= self.max_tokens {
-            return Ok(StepResult::with_stop_trigger(
-                token,
-                StopTrigger::MaxTokensLimit,
             ));
         }
 

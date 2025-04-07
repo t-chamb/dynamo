@@ -24,18 +24,18 @@ from pydantic import BaseModel, ValidationError
 # import * causes "unable to detect undefined names"
 from dynamo._core import Backend as Backend
 from dynamo._core import Client as Client
+from dynamo._core import Component as Component
 from dynamo._core import DistributedRuntime as DistributedRuntime
-from dynamo._core import KvRouter as KvRouter
 from dynamo._core import ModelDeploymentCard as ModelDeploymentCard
 from dynamo._core import OAIChatPreprocessor as OAIChatPreprocessor
 
 
-def dynamo_worker():
+def dynamo_worker(static=False):
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
             loop = asyncio.get_running_loop()
-            runtime = DistributedRuntime(loop)
+            runtime = DistributedRuntime(loop, static)
 
             await func(runtime, *args, **kwargs)
 
@@ -63,7 +63,7 @@ def dynamo_endpoint(
     request_model: Union[Type[BaseModel], Type[Any]], response_model: Type[BaseModel]
 ) -> Callable:
     def decorator(
-        func: Callable[..., AsyncGenerator[Any, None]]
+        func: Callable[..., AsyncGenerator[Any, None]],
     ) -> Callable[..., AsyncGenerator[Any, None]]:
         @wraps(func)
         async def wrapper(*args, **kwargs) -> AsyncGenerator[Any, None]:

@@ -16,7 +16,7 @@
 //! The Preprocessor consists of the following modules
 //!
 //! - `translation`: This module converts the allowed Ingress message types to the corresponding
-//!    internal representation.
+//!   internal representation.
 //! - `apply`: This module applies ModelConfig defaults to any empty optional fields specified
 //! - `prompt`: This module applies any prompt template logic to the internal Request object.
 //! - `tokenize`: This module tokenizes the formatted prompt string and returns the token ids.
@@ -34,6 +34,7 @@ use tracing;
 
 use crate::model_card::model::{ModelDeploymentCard, ModelInfo, TokenizerKind};
 use crate::preprocessor::prompt::OAIChatLikeRequest;
+use crate::tokenizers::Encoding;
 
 use dynamo_runtime::engine::{AsyncEngine, AsyncEngineContextProvider, ResponseStream};
 use dynamo_runtime::pipeline::{
@@ -73,6 +74,9 @@ impl OpenAIPreprocessor {
 
         let tokenizer = match &mdc.tokenizer {
             TokenizerKind::HfTokenizerJson(file) => HuggingFaceTokenizer::from_file(file)?,
+            TokenizerKind::GGUF(tokenizer) => {
+                HuggingFaceTokenizer::from_tokenizer(*tokenizer.clone())
+            }
         };
         let tokenizer = Arc::new(tokenizer);
 
@@ -88,7 +92,12 @@ impl OpenAIPreprocessor {
         }))
     }
 
-    /// Translate a [`ChatCompletionRequest`] request to a common completion request.
+    /// Encode a string to it's tokens
+    pub fn tokenize(&self, s: &str) -> anyhow::Result<Encoding> {
+        self.tokenizer.encode(s)
+    }
+
+    /// Translate a [`NvCreateChatCompletionRequest`] request to a common completion request.
     /// Returns both the common completion request and a hashmap of annotations.
     ///
     /// Annotations evaluated by this method include:
@@ -137,12 +146,6 @@ impl OpenAIPreprocessor {
         }
 
         let mut stop_conditions = request.extract_stop_conditions()?;
-
-        // todo - pull this from the mdc default sampling/stop params
-        if stop_conditions.max_tokens.is_none() {
-            stop_conditions.max_tokens = Some(64);
-        }
-
         if let Some(stop_tokens) = &mut stop_conditions.stop_token_ids_hidden {
             for eos_token in self.model_info.eos_token_ids() {
                 if !stop_tokens.contains(&eos_token) {

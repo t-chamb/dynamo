@@ -32,7 +32,7 @@ Example:
 
 const ZMQ_SOCKET_PREFIX: &str = "dyn";
 
-const USAGE: &str = "USAGE: dynamo-run in=[http|text|dyn://<path>|none] out=[mistralrs|sglang|llamacpp|vllm|trtllm|echo_full|echo_core|pystr:<engine.py>|pytok:<engine.py>] [--http-port 8080] [--model-path <path>] [--model-name <served-model-name>] [--model-config <hf-repo>] [--tensor-parallel-size=1] [--num-nodes=1] [--node-rank=0] [--leader-addr=127.0.0.1:9876] [--base-gpu-id=0]";
+const USAGE: &str = "USAGE: dynamo-run in=[http|text|dyn://<path>|batch:<folder>|none] out=[See available engines below] [--http-port 8080] [--model-path <path>] [--model-name <served-model-name>] [--model-config <hf-repo>] [--tensor-parallel-size=1] [--num-nodes=1] [--node-rank=0] [--leader-addr=127.0.0.1:9876] [--base-gpu-id=0] [--extra-engine-args=args.json]";
 
 fn main() -> anyhow::Result<()> {
     logging::init();
@@ -51,8 +51,7 @@ fn main() -> anyhow::Result<()> {
             if cfg!(feature = "sglang") {
                 #[cfg(feature = "sglang")]
                 {
-                    use dynamo_llm::engines::sglang;
-                    let gpu_config = sglang::MultiGPUConfig {
+                    let gpu_config = dynamo_engine_sglang::MultiGPUConfig {
                         tp_size: flags.tensor_parallel_size,
                         tp_rank: sglang_flags.tp_rank,
                         gpu_id: sglang_flags.gpu_id,
@@ -62,12 +61,13 @@ fn main() -> anyhow::Result<()> {
                         node_rank: flags.node_rank,
                         leader_addr: flags.leader_addr.unwrap_or_default(),
                     };
-                    return sglang::run_subprocess(
+                    return dynamo_engine_sglang::run_subprocess(
                         ZMQ_SOCKET_PREFIX,
                         model_path,
                         sglang_flags.pipe_fd as std::os::fd::RawFd,
                         node_config,
                         gpu_config,
+                        flags.extra_engine_args,
                     );
                 }
             } else {
@@ -80,27 +80,20 @@ fn main() -> anyhow::Result<()> {
             let Some(model_path) = flags.model_path_flag else {
                 anyhow::bail!("vllm subprocess requires --model-path flag");
             };
-            let Some(model_config) = flags.model_config else {
-                anyhow::bail!("vllm subprocess requires --model-config");
-            };
-            if !model_config.is_dir() {
-                anyhow::bail!("vllm subprocess requires model config path to be a directory containing tokenizer.json, config.json, etc");
-            }
             if cfg!(feature = "vllm") {
                 #[cfg(feature = "vllm")]
                 {
-                    use dynamo_llm::engines::vllm;
                     let node_config = dynamo_llm::engines::MultiNodeConfig {
                         num_nodes: flags.num_nodes,
                         node_rank: flags.node_rank,
                         leader_addr: flags.leader_addr.unwrap_or_default(),
                     };
-                    return vllm::run_subprocess(
+                    return dynamo_engine_vllm::run_subprocess(
                         ZMQ_SOCKET_PREFIX,
-                        &model_config,
                         &model_path,
                         node_config,
                         flags.tensor_parallel_size,
+                        flags.extra_engine_args,
                     );
                 }
             } else {
@@ -164,10 +157,14 @@ async fn wrapper(runtime: dynamo_runtime::Runtime) -> anyhow::Result<()> {
         }
         None => {
             let default_engine = Output::default(); // smart default based on feature flags
-            tracing::debug!("Using engine: {default_engine}");
+            tracing::info!(
+                "Using default engine: {default_engine}. Use out=<engine> to specify one of {}",
+                Output::available_engines().join(", ")
+            );
             default_engine
         }
     };
+    print_cuda(&out_opt);
 
     // Clap skips the first argument expecting it to be the binary name, so add it back
     // Note `--model-path` has index=1 (in lib.rs) so that doesn't need a flag.
@@ -186,3 +183,39 @@ async fn wrapper(runtime: dynamo_runtime::Runtime) -> anyhow::Result<()> {
     )
     .await
 }
+
+/// If the user will benefit from CUDA/Metal/Vulkan, remind them to build with it.
+/// If they have it, celebrate!
+// Only mistralrs and llamacpp need to be built with CUDA.
+// The Python engines only need it at runtime.
+#[cfg(any(feature = "mistralrs", feature = "llamacpp"))]
+fn print_cuda(output: &Output) {
+    // These engines maybe be compiled in, but are they the chosen one?
+    match output {
+        #[cfg(feature = "mistralrs")]
+        Output::MistralRs => {}
+        #[cfg(feature = "llamacpp")]
+        Output::LlamaCpp => {}
+        _ => {
+            return;
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    {
+        tracing::info!("CUDA on");
+    }
+    #[cfg(feature = "metal")]
+    {
+        tracing::info!("Metal on");
+    }
+    #[cfg(feature = "vulkan")]
+    {
+        tracing::info!("Vulkan on");
+    }
+    #[cfg(not(any(feature = "cuda", feature = "metal", feature = "vulkan")))]
+    tracing::info!("CPU mode. Rebuild with `--features cuda|metal|vulkan` for better performance");
+}
+
+#[cfg(not(any(feature = "mistralrs", feature = "llamacpp")))]
+fn print_cuda(_output: &Output) {}
