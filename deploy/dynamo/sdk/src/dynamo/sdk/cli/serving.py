@@ -227,7 +227,7 @@ def create_dynamo_watcher(
 
     # TODO: Expose this setting to the services
     if "TensorRTLLM" in svc.name:
-        args = ["-np", "1", "--allow-run-as-root", "--oversubscribe", "sys.executable"] + args
+        args = ["-np", "1", "--allow-run-as-root", "--oversubscribe", f"{sys.executable}"] + args
         cmd = "mpirun"
     else:
         import sys
