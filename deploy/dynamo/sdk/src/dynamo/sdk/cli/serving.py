@@ -234,6 +234,7 @@ def create_dynamo_watcher(
         cmd = sys.executable
 
     # Create the watcher with updated environment
+    import signal
     watcher = create_watcher(
         name=f"{namespace}_{svc.name}",
         cmd = cmd,
@@ -241,6 +242,7 @@ def create_dynamo_watcher(
         numprocesses=num_workers,
         working_dir=working_dir,
         env=worker_env,
+        stop_signal=signal.SIGINT
     )
 
     logger.info(f"Created watcher for {svc.name}'s in the {namespace} namespace")
