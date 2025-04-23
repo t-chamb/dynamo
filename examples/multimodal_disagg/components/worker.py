@@ -31,6 +31,7 @@ from vllm.entrypoints.openai.api_server import (
 from vllm.remote_prefill import RemotePrefillParams, RemotePrefillRequest
 from vllm.sampling_params import RequestOutputKind
 from vllm.inputs.data import TokensPrompt
+from transformers import LlavaForConditionalGeneration
 
 from dynamo.llm import KvMetricsPublisher
 from dynamo.sdk import async_on_start, depends, dynamo_context, dynamo_endpoint, service
@@ -143,7 +144,10 @@ class VllmWorker:
             await self.disaggregated_router.async_init()
         else:
             self.disaggregated_router = None
-        logger.info("VllmWorker has been initialized")
+
+        model = LlavaForConditionalGeneration.from_pretrained(self.engine_args.model)
+        vision_tower = model.vision_tower
+        self.embedding_size = vision_tower.vision_model.embeddings.position_embedding.num_embeddings
 
     def shutdown_vllm_engine(self, signum, frame):
         """Shutdown the background loop"""
@@ -207,12 +211,14 @@ class VllmWorker:
 
         # rust HTTP requires Delta streaming
         request.sampling_params.output_kind = RequestOutputKind.DELTA
-        # WAR: Manually insert image placeholder based on the shape of the image features so that the decode worker can pre-allocate the memory with the correct size.
-        _IMAGE_TOKEN_INDEX = 32000
-        # Expected shape of image features after encoding: [1, 577, 4096]
-        image_shape = 577
-        # Expected prompt to be like: "\nUSER: " + '\n' + prompt + '\nASSISTANT:', no <image> tags.
-        prompt_ids = request.engine_prompt["prompt_token_ids"][:6] + [_IMAGE_TOKEN_INDEX] * image_shape + request.engine_prompt["prompt_token_ids"][6:]
+
+        # The decode worker will pre-allocate the memory based on the prompt token length for the prefill worker to transfer the kv cache.
+        # As a workaround, here we manually insert some placeholder dummy tokens based on the embedding size
+        # so that decode worker can pre-allocate the memory with the correct size.
+        # The structure of the prompt will be like: "\nUSER: <placeholder_tokens>\nDescribe the image.\nASSISTANT:".
+        DUMMY_TOKEN_INDEX = 0
+        prompt_ids = request.engine_prompt["prompt_token_ids"][:6] + [DUMMY_TOKEN_INDEX] * self.embedding_size + request.engine_prompt["prompt_token_ids"][6:]
+
         async for response in self.engine_client.generate(
             prompt=TokensPrompt(
                 prompt_token_ids=prompt_ids,

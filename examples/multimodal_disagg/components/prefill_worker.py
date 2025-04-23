@@ -177,31 +177,6 @@ class PrefillWorker:
             image_features = torch.tensor(
                 encode_output.image_features, device="cpu", dtype=torch.float16
             )
-        
-        #  This part is not needed if the decode worker is able to pre-allocate the memory with the correct size.
-        # Calculate number of tokens from image features shape
-        # image_features shape is [1, num_tokens, hidden_dim]
-        # num_tokens = image_features.shape[1]  # This gives us 577
-        # # Calculate number of blocks needed for image features
-        # tokens_per_block = self.engine_args.block_size  # This should match your block size
-        # num_image_blocks = (num_tokens + tokens_per_block - 1) // tokens_per_block
-
-        # # Use the original block IDs from the request for text tokens
-        # # and append our image block IDs after them
-        # text_block_ids = request.block_ids
-        # image_block_ids = list(range(len(text_block_ids), len(text_block_ids) + num_image_blocks))
-        
-        # # Combine text and image block IDs
-        # combined_block_ids = text_block_ids + image_block_ids
-
-        # # Get the tp size
-        # tp_size = self.engine_args.tensor_parallel_size
-        # # Expand block IDs for tensor parallelism   
-        # block_ids = list(range(num_image_blocks))
-        # expanded_block_ids = []
-        # # for block_id in block_ids:
-        # for block_id in combined_block_ids:
-        #     expanded_block_ids.extend([block_id * tp_size + i for i in range(tp_size)])
 
         sampling_params = request.sampling_params
         sampling_params.max_tokens = 1
@@ -225,9 +200,13 @@ class PrefillWorker:
             )
             self._loaded_metadata.add(request.engine_id)
 
-        # WAR: Seeing some issues when where the number of image placeholder is calculated twice so manually modify the prompt token ids to be the token ids tokenized from the prompt "\nUSER: <image>\nDescribe the image.\nASSISTANT:", which has the <image> token.
-        # This is matching the token ids from the processor. 
-        prompt_token_ids = [4911, 29901, 29871, 13, 11889, 29901, 29871, 32000, 29871, 13, 4002, 29581, 278, 1967, 29889, 13, 22933, 9047, 13566, 29901, 13, 7900, 22137, 29901]
+        # To make sure the decode worker can pre-allocate the memory with the correct size for the prefill worker to transfer the kv cache,
+        # we manually insert some placeholder dummy tokens based on the embedding size.
+        # Here we need to make sure those dummy tokens are replaced by the actual image tokens id, which is 32000.
+        # The structure of the prompt will be like: "\nUSER: <image>\nDescribe the image.\nASSISTANT:".
+        IMAGE_TOKEN_INDEX = 32000
+        embedding_size = image_features.shape[1]
+        prompt_token_ids = request.prompt_token_ids[:6] + [IMAGE_TOKEN_INDEX] + request.prompt_token_ids[6 + embedding_size:]
         async for _ in self.engine_client.generate(
             request_id=request.request_id,
             prompt=TokensPrompt(
