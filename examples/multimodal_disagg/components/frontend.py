@@ -14,23 +14,22 @@
 # limitations under the License.
 
 import logging
-import subprocess
 from pathlib import Path
+from typing import AsyncGenerator
 
 from components.processor import Processor
 from components.worker import VllmWorker
 from pydantic import BaseModel
+from utils.protocol import MultiModalRequest
 
 from dynamo import sdk
-from dynamo.sdk import async_on_shutdown, depends, service
-from dynamo.sdk.lib.config import ServiceConfig
+from dynamo.sdk import api, depends, service
 from dynamo.sdk.lib.image import DYNAMO_IMAGE
 
 logger = logging.getLogger(__name__)
 
 
 def get_http_binary_path():
-    """Find the HTTP binary path in SDK or fallback to 'http' command."""
     sdk_path = Path(sdk.__file__)
     binary_path = sdk_path.parent / "cli/bin/http"
     if not binary_path.exists():
@@ -40,14 +39,11 @@ def get_http_binary_path():
 
 
 class FrontendConfig(BaseModel):
-    """Configuration for the Frontend service including model and HTTP server settings."""
-
     served_model_name: str
     endpoint: str
     port: int = 8080
 
 
-# todo this should be called ApiServer
 @service(
     resources={"cpu": "10", "memory": "20Gi"},
     workers=1,
@@ -57,63 +53,16 @@ class Frontend:
     worker = depends(VllmWorker)
     processor = depends(Processor)
 
-    def __init__(self):
-        """Initialize Frontend service with HTTP server and model configuration."""
-        config = ServiceConfig.get_instance()
-        frontend_config = FrontendConfig(**config.get("Frontend", {}))
-        self.frontend_config = frontend_config
-        self.process = None
-
-        self.setup_model()
-        self.start_http_server()
-
-    def setup_model(self):
-        """Configure the model for HTTP service using llmctl."""
-        subprocess.run(
-            [
-                "llmctl",
-                "http",
-                "remove",
-                "chat-models",
-                self.frontend_config.served_model_name,
-            ],
-            check=False,
+    @api
+    async def generate(
+        self,
+        model: str,
+        image: str,
+        max_tokens: int = 300,
+        prompt: str = "Describe the image in detail.",
+    ) -> AsyncGenerator[str, None]:
+        request = MultiModalRequest(
+            model=model, image=image, max_tokens=max_tokens, prompt=prompt
         )
-        subprocess.run(
-            [
-                "llmctl",
-                "http",
-                "add",
-                "chat-models",
-                self.frontend_config.served_model_name,
-                self.frontend_config.endpoint,
-            ],
-            check=False,
-        )
-
-    def start_http_server(self):
-        """Start the HTTP server on the configured port."""
-        logger.info("Starting HTTP server")
-        http_binary = get_http_binary_path()
-
-        self.process = subprocess.Popen(
-            [http_binary, "-p", str(self.frontend_config.port)],
-            stdout=None,
-            stderr=None,
-        )
-
-    @async_on_shutdown
-    def cleanup(self):
-        """Clean up resources before shutdown."""
-
-        # circusd manages shutdown of http server process, we just need to remove the model using the on_shutdown hook
-        subprocess.run(
-            [
-                "llmctl",
-                "http",
-                "remove",
-                "chat-models",
-                self.frontend_config.served_model_name,
-            ],
-            check=False,
-        )
+        async for response in self.processor.generate(request.model_dump_json()):
+            yield response

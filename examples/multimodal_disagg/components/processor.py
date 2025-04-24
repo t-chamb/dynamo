@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import uuid
 from enum import Enum
@@ -23,7 +24,7 @@ from components.worker import VllmWorker
 from transformers import AutoTokenizer
 from utils.chat_processor import ChatProcessor, CompletionsProcessor, ProcessMixIn
 from utils.logging import check_required_workers
-from utils.protocol import MyRequestOutput, Tokens, vLLMGenerateRequest
+from utils.protocol import MultiModalRequest, MyRequestOutput, vLLMMultimodalRequest
 from utils.vllm import parse_vllm_args
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.entrypoints.openai.protocol import ChatCompletionRequest, CompletionRequest
@@ -67,7 +68,6 @@ class Processor(ProcessMixIn):
             self.tokenizer, self.model_config
         )
         self.min_workers = 1
-        print(f"Processor init: {self.engine_args.router}")
 
     def _create_tokenizer(self, engine_args: AsyncEngineArgs) -> AnyTokenizer:
         """Create a TokenizerGroup using engine arguments similar to VLLM's approach"""
@@ -94,15 +94,6 @@ class Processor(ProcessMixIn):
             .client()
         )
 
-        if self.engine_args.router == "kv":
-            router_ns, router_name = Router.dynamo_address()  # type: ignore
-            self.router_client = (
-                await runtime.namespace(router_ns)
-                .component(router_name)
-                .endpoint("generate")
-                .client()
-            )
-
         await check_required_workers(self.worker_client, self.min_workers)
 
         self.etcd_kv_cache = await EtcdKvCache.create(
@@ -111,9 +102,11 @@ class Processor(ProcessMixIn):
             {"router": self.engine_args.router},
         )
 
+    # Main method to parse the request and send the request to the vllm worker.
     async def _generate(
         self,
         raw_request: Union[CompletionRequest, ChatCompletionRequest],
+        image: str,
         request_type: RequestType,
     ):
         request_id = str(uuid.uuid4())
@@ -125,62 +118,54 @@ class Processor(ProcessMixIn):
             engine_prompt,
             sampling_params,
         ) = await self._parse_raw_request(raw_request)
+
         router_mode = (await self.etcd_kv_cache.get("router")).decode()
         if router_mode == "kv":
-            router_generator = await self.router_client.generate(
-                Tokens(tokens=engine_prompt["prompt_token_ids"]).model_dump_json()
-            )
-            decision = await router_generator.__anext__()
-            decision = decision.data()
-            worker_id, prefix_hit_rate = decision.split("_")
-            prefix_hit_rate = float(prefix_hit_rate)
             logger.info(
-                f"Worker ID: {worker_id} with estimated prefix hit rate: {prefix_hit_rate}"
+                "Multimodal requests are not supported for kv router mode, falling back to round-robin",
             )
+            router_mode = "round-robin"
 
-            if worker_id == "":
-                engine_generator = await self.worker_client.generate(
-                    vLLMGenerateRequest(
-                        engine_prompt=engine_prompt,
-                        sampling_params=sampling_params,
-                        request_id=request_id,
-                        prefix_hit_rate=prefix_hit_rate,
-                    ).model_dump_json()
-                )
-            else:
-                engine_generator = await self.worker_client.direct(
-                    vLLMGenerateRequest(
-                        engine_prompt=engine_prompt,
-                        sampling_params=sampling_params,
-                        request_id=request_id,
-                        prefix_hit_rate=prefix_hit_rate,
-                    ).model_dump_json(),
-                    int(worker_id),
-                )
-        elif router_mode == "random":
+        if router_mode == "random":
             engine_generator = await self.worker_client.generate(
-                vLLMGenerateRequest(
+                vLLMMultimodalRequest(
                     engine_prompt=engine_prompt,
                     sampling_params=sampling_params,
                     request_id=request_id,
+                    image_url=image,
                 ).model_dump_json()
             )
         elif router_mode == "round-robin":
             engine_generator = await self.worker_client.round_robin(
-                vLLMGenerateRequest(
+                vLLMMultimodalRequest(
                     engine_prompt=engine_prompt,
                     sampling_params=sampling_params,
                     request_id=request_id,
+                    image_url=image,
                 ).model_dump_json()
             )
+        else:
+            raise NotImplementedError(f"Router mode {router_mode} not implemented")
 
         output = self._generate_responses(engine_generator, request_type)
 
+        # TODO: This is a temporary solution to combine the content from the engine generator.
+        # After having the multimodal support in OpenAI compatible frontend, we can use that
+        # directly without the need to manually combine the content.
+        combined_content = ""
         async for response in await self._stream_response(
             request, output, request_id, conversation
         ):
-            yield response
+            if "choices" in response and len(response["choices"]) > 0:
+                delta = response["choices"][0].get("delta", {})
+                content = delta.get("content", "")
+                combined_content += content
 
+                # Yield complete content on final response
+                if response["choices"][0].get("finish_reason") is not None:
+                    yield combined_content
+
+    # This method is used to process the responses from the engine generator.
     async def _generate_responses(
         self, engine_generator: AsyncIterator[RequestOutput], request_type: RequestType
     ) -> AsyncIterator[Union[RequestOutput, Tuple[int, RequestOutput]]]:
@@ -212,12 +197,24 @@ class Processor(ProcessMixIn):
                     f"Request type {request_type} not implemented"
                 )
 
-    @dynamo_endpoint(name="chat/completions")
-    async def chat_completions(self, raw_request: ChatCompletionRequest):
-        async for response in self._generate(raw_request, RequestType.CHAT):
-            yield response
+    # The generate endpoint will be used by the frontend to handle incoming requests.
+    @dynamo_endpoint()
+    async def generate(self, request: MultiModalRequest):
+        # TODO: After having the multimodal support in OpenAI compatible frontend, we can use that directly and remove the custom endpoint.
+        msg = {
+            "role": "user",
+            "content": "USER: \nQuestion:" + request.prompt + " Answer:",
+        }
 
-    # @dynamo_endpoint()
-    # async def completions(self, raw_request: CompletionRequest):
-    #     async for response in self._generate(raw_request, RequestType.COMPLETION):
-    #         yield response
+        chat_request = ChatCompletionRequest(
+            model=request.model,
+            messages=[msg],
+            stream=True,
+            max_tokens=request.max_tokens,
+            request_id=str(uuid.uuid4()),
+        )
+
+        async for response in self._generate(
+            chat_request, request.image, RequestType.CHAT
+        ):
+            yield json.dumps(response)

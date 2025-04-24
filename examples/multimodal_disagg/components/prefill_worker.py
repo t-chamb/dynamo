@@ -164,12 +164,12 @@ class PrefillWorker:
                         pass
 
     async def generate(self, request: RemotePrefillRequest):
-        # TODO: Have the frontend support image url and pass it here.
-        image_url = "http://images.cocodataset.org/test2017/000000155781.jpg"
-
+        if request.multimodal_data_source["image_url"] is None:
+            raise ValueError("No image url provided for prefill request")
+        
         encode_generator = await self.encode_worker_client.round_robin(
             EncodeRequest(
-                image_url=image_url,
+                image_url=request.multimodal_data_source["image_url"],
             ).model_dump_json()
         )
         async for encode_response in encode_generator:
@@ -211,6 +211,7 @@ class PrefillWorker:
             request_id=request.request_id,
             prompt=TokensPrompt(
                 prompt_token_ids=prompt_token_ids,
+                # prompt_token_ids=request.prompt_token_ids,
                 multi_modal_data={"image": image_features},
             ),
             sampling_params=sampling_params,

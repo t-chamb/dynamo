@@ -23,7 +23,12 @@ from components.disagg_router import PyDisaggregatedRouter
 from components.prefill_worker import PrefillWorker
 from utils.nixl import NixlMetadataStore
 from utils.prefill_queue import PrefillQueue
-from utils.protocol import MyRequestOutput, vLLMGenerateRequest
+from utils.protocol import (
+    EncodeRequest,
+    EncodeResponse,
+    MyRequestOutput,
+    vLLMMultimodalRequest,
+)
 from utils.vllm import parse_vllm_args
 from vllm.entrypoints.openai.api_server import (
     build_async_engine_client_from_engine_args,
@@ -177,7 +182,7 @@ class VllmWorker:
         return callback
 
     @dynamo_endpoint()
-    async def generate(self, request: vLLMGenerateRequest):
+    async def generate(self, request: vLLMMultimodalRequest):
         # TODO: consider prefix hit when deciding prefill locally or remotely
 
         if self.disaggregated_router is not None:
@@ -199,6 +204,10 @@ class VllmWorker:
             remote_prefill_params = RemotePrefillParams(
                 is_remote_prefill=True,
                 remote_prefill_request_callback=self.get_remote_prefill_request_callback(),
+                # Pass the image url as part of the RemotePrefillParams, which will be passed to the prefill worker via RemotePrefillRequest
+                multimodal_data_source={
+                    "image_url": request.image_url,
+                },
             )
             logger.info(
                 f"Prefilling remotely for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
