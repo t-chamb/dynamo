@@ -295,30 +295,29 @@ class BaseTensorrtLLMEngine:
             return
 
         events = self._llm_engine.get_kv_cache_events_async(timeout=5)
-        async for event_list in events:
-            for event in event_list:
-                data = event["data"]
-                if data["type"] == "stored":
-                    parent_hash = data["parent_hash"]
-                    for block in data["blocks"]:
-                        tokens = []
-                        for token in block["tokens"]:
-                            tokens.append(int(token["token_id"]))
+        async for event in events:
+            data = event["data"]
+            if data["type"] == "stored":
+                parent_hash = data["parent_hash"]
+                for block in data["blocks"]:
+                    tokens = []
+                    for token in block["tokens"]:
+                        tokens.append(int(token["token_id"]))
 
-                        # Note: Currently data does not have lora_id.
-                        # Using 0 as default value. If later data has
-                        # lora_id, we need to verify if this is correct.
-                        lora_id = data.get("lora_id", 0)
-                        self._kv_cache_events_publisher.stored_event(
-                            parent_hash,
-                            block["block_hash"],
-                            tokens,
-                            lora_id,
-                        )
-                        parent_hash = block["block_hash"]
-                elif data["type"] == "removed":
-                    for block_hash in data["block_hashes"]:
-                        self._kv_cache_events_publisher.removed_event(block_hash)
+                    # Note: Currently data does not have lora_id.
+                    # Using 0 as default value. If later data has
+                    # lora_id, we need to verify if this is correct.
+                    lora_id = data.get("lora_id", 0)
+                    self._kv_cache_events_publisher.stored_event(
+                        parent_hash,
+                        block["block_hash"],
+                        tokens,
+                        lora_id,
+                    )
+                    parent_hash = block["block_hash"]
+            elif data["type"] == "removed":
+                for block_hash in data["block_hashes"]:
+                    self._kv_cache_events_publisher.removed_event(block_hash)
         return True
 
     def _start_threads(self):
