@@ -198,7 +198,7 @@ class LocalConnector(PlannerConnector):
         self, component_name: str, blocking: bool = True
     ) -> bool:
         """
-        Remove a component. The initial components are not numbered so we simply remove their resources
+        Remove a component. The initial components are suffixed with _0. We simply remove their resources
         and lease but keep the entry in order to use the cmd. This allows us to re-add the component
         without having to re-specify the cmd. For components that have been added, we remove their entry
         entry

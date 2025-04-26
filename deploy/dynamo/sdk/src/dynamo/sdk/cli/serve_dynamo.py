@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import signal
-import sys
 import time
 import typing as t
 from typing import Any
@@ -278,10 +277,6 @@ def main(
                 if class_instance.__class__.__name__ == "PrefillWorker":
                     await asyncio.wait_for(class_instance.task, timeout=None)
 
-            except GracefulExit:
-                logger.info(f"[{run_id}] Gracefully shutting down {service.name}")
-                # Add any specific cleanup needed
-                return None
             except Exception as e:
                 logger.error(f"Error in Dynamo component setup: {str(e)}")
                 raise
@@ -327,26 +322,12 @@ def main(
                 logger.error(f"Error in web worker: {str(e)}")
                 raise
 
-        try:
-            uvloop.install()
-            if service.app:
-                web_worker()
-            else:
-                asyncio.run(worker())
-        except GracefulExit:
-            logger.info("Exiting gracefully")
-            sys.exit(0)
-        except KeyboardInterrupt:
-            logger.info("Interrupted, shutting down gracefully")
-            sys.exit(0)
+        uvloop.install()
+        if service.app:
+            web_worker()
+        else:
+            asyncio.run(worker())
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except (GracefulExit, KeyboardInterrupt):
-        logger.info("Exiting gracefully")
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
-        sys.exit(1)
+    main()

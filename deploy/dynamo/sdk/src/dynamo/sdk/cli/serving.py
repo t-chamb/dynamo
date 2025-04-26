@@ -237,7 +237,6 @@ def serve_dynamo_graph(
         # inject runner map now
         inject_env = {"BENTOML_RUNNER_MAP": json.dumps(dependency_map)}
 
-        print(f"watchers: {watchers}")
         for watcher in watchers:
             if watcher.env is None:
                 watcher.env = inject_env
