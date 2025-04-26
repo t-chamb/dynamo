@@ -75,7 +75,7 @@ def create_dynamo_watcher(
     scheduler: ResourceAllocator,
     working_dir: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
-) -> tuple[Watcher, CircusSocket, str]:
+) -> tuple[list[Watcher], list[CircusSocket], dict[str, str]]:
     """Create a watcher for a Dynamo service in the dependency graph"""
     from dynamo.sdk.cli.circus import create_circus_watcher
 
