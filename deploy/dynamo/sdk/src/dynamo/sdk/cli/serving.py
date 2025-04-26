@@ -85,7 +85,7 @@ def create_dynamo_watcher(
     uri, socket = _get_server_socket(svc, uds_path)
 
     watchers = []
-    sockets = [socket]
+    sockets = []
     worker_uris = {}
 
     if num_workers > 0 and not resource_envs:
@@ -93,6 +93,9 @@ def create_dynamo_watcher(
 
     # create singleton watcher per worker
     for worker_idx in range(num_workers):
+        uri, socket = _get_server_socket(svc, uds_path)
+        sockets.append(socket)
+
         watcher_name = f"{namespace}_{comp_name}_{worker_idx}"
 
         worker_env_dict = resource_envs[worker_idx] if resource_envs else {}
