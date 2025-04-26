@@ -179,26 +179,17 @@ def serve_dynamo_graph(
     if dependency_map is None:
         dependency_map = {}
 
-    standalone = False
-    if service_name:
-        logger.info(f"Service '{service_name}' running in standalone mode")
-        standalone = True
-
     if service_name and service_name != svc.name:
         svc = svc.find_dependent_by_name(service_name)
-    # num_workers, resource_envs = allocator.get_resource_envs(svc)
     uds_path = tempfile.mkdtemp(prefix="dynamo-uds-")
     try:
-        # Process all services including the main one in a single loop
-        # if not standalone:
+        # Process all services including standalong and main service
         with contextlib.ExitStack() as port_stack:
-            # Get all services to process (including main service if not specified)
             services_to_process = {}
             if service_name:
-                # If specific service requested, only process that one
+                logger.info(f"Service '{service_name}' running in standalone mode")
                 services_to_process[service_name] = svc
             else:
-                # Process all services including the main one
                 services_to_process = svc.all_services()
 
             # Process all services
@@ -214,7 +205,6 @@ def serve_dynamo_graph(
                 ):
                     continue
 
-                # Create watchers for this service
                 (
                     service_watchers,
                     service_sockets,
@@ -229,7 +219,6 @@ def serve_dynamo_graph(
                 )
                 namespace, _ = service_to_run.dynamo_address()
 
-                # Add watchers and sockets to main lists
                 watchers.extend(service_watchers)
                 sockets.extend(service_sockets)
 
@@ -237,7 +226,6 @@ def serve_dynamo_graph(
                 if service_uris:
                     primary_uri = next(iter(service_uris.values()))
                     dependency_map[name] = primary_uri
-                    # Also store worker URIs for direct routing
                     dependency_map[f"{name}_workers"] = json.dumps(service_uris)
 
             # reserve one more to avoid conflicts
