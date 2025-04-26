@@ -186,62 +186,62 @@ def serve_dynamo_graph(
 
     if service_name and service_name != svc.name:
         svc = svc.find_dependent_by_name(service_name)
-    num_workers, resource_envs = allocator.get_resource_envs(svc)
+    # num_workers, resource_envs = allocator.get_resource_envs(svc)
     uds_path = tempfile.mkdtemp(prefix="dynamo-uds-")
     try:
         # Process all services including the main one in a single loop
-        if not standalone:
-            with contextlib.ExitStack() as port_stack:
-                # Get all services to process (including main service if not specified)
-                services_to_process = {}
-                if service_name:
-                    # If specific service requested, only process that one
-                    services_to_process[service_name] = svc
-                else:
-                    # Process all services including the main one
-                    services_to_process = svc.all_services()
+        # if not standalone:
+        with contextlib.ExitStack() as port_stack:
+            # Get all services to process (including main service if not specified)
+            services_to_process = {}
+            if service_name:
+                # If specific service requested, only process that one
+                services_to_process[service_name] = svc
+            else:
+                # Process all services including the main one
+                services_to_process = svc.all_services()
 
-                # Process all services
-                for name, service_to_run in services_to_process.items():
-                    # Skip if already in dependency map
-                    if name in dependency_map:
-                        continue
+            # Process all services
+            for name, service_to_run in services_to_process.items():
+                # Skip if already in dependency map
+                if name in dependency_map:
+                    continue
 
-                    # Check if it's a Dynamo component
-                    if not (
-                        hasattr(service_to_run, "is_dynamo_component")
-                        and service_to_run.is_dynamo_component()
-                    ):
-                        continue
+                # Check if it's a Dynamo component
+                if not (
+                    hasattr(service_to_run, "is_dynamo_component")
+                    and service_to_run.is_dynamo_component()
+                ):
+                    continue
 
-                    # Create watchers for this service
-                    (
-                        service_watchers,
-                        service_sockets,
-                        service_uris,
-                    ) = create_dynamo_watcher(
-                        bento_id,
-                        service_to_run,
-                        uds_path,
-                        allocator,
-                        str(bento_path.absolute()),
-                        env=env,
-                    )
-                    namespace, _ = service_to_run.dynamo_address()
+                # Create watchers for this service
+                (
+                    service_watchers,
+                    service_sockets,
+                    service_uris,
+                ) = create_dynamo_watcher(
+                    bento_id,
+                    service_to_run,
+                    uds_path,
+                    allocator,
+                    str(bento_path.absolute()),
+                    env=env,
+                )
+                namespace, _ = service_to_run.dynamo_address()
 
-                    # Add watchers and sockets to main lists
-                    watchers.extend(service_watchers)
-                    sockets.extend(service_sockets)
+                # Add watchers and sockets to main lists
+                watchers.extend(service_watchers)
+                sockets.extend(service_sockets)
 
-                    # Store the primary URI for service discovery
-                    if service_uris:
-                        primary_uri = next(iter(service_uris.values()))
-                        dependency_map[name] = primary_uri
-                        # Also store worker URIs for direct routing
-                        dependency_map[f"{name}_workers"] = json.dumps(service_uris)
+                # Store the primary URI for service discovery
+                if service_uris:
+                    primary_uri = next(iter(service_uris.values()))
+                    dependency_map[name] = primary_uri
+                    # Also store worker URIs for direct routing
+                    dependency_map[f"{name}_workers"] = json.dumps(service_uris)
 
-                # reserve one more to avoid conflicts
-                port_stack.enter_context(reserve_free_port())
+            # reserve one more to avoid conflicts
+            port_stack.enter_context(reserve_free_port())
 
         # inject runner map now
         inject_env = {"BENTOML_RUNNER_MAP": json.dumps(dependency_map)}
