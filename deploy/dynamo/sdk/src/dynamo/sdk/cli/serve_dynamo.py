@@ -158,15 +158,9 @@ def main(
 
     # Ensure environment variables are set before we initialize
     if worker_env:
-        env_list: list[dict[str, t.Any]] = json.loads(worker_env)
-        if worker_id is not None:
-            worker_key = worker_id - 1
-            if worker_key >= len(env_list):
-                raise IndexError(
-                    f"Worker ID {worker_id} is out of range, "
-                    f"the maximum worker ID is {len(env_list)}"
-                )
-            os.environ.update(env_list[worker_key])
+        logger.debug(f"Setting environment variables for {run_id}: {worker_env}")
+        env_dict = json.loads(worker_env)
+        os.environ.update(env_dict)
 
     service = import_service(bento_identifier)
     if service_name and service_name != service.name:
