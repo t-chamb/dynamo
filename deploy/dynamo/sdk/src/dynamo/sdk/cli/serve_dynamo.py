@@ -22,7 +22,6 @@ import inspect
 import json
 import logging
 import os
-import signal
 import time
 import typing as t
 from typing import Any
@@ -90,19 +89,6 @@ class GracefulExit(SystemExit):
     pass
 
 
-def setup_signal_handlers():
-    """Setup signal handlers for graceful shutdown."""
-
-    def signal_handler(sig, frame):
-        logger.info(f"Received signal {sig}, initiating graceful shutdown")
-        raise GracefulExit(0)
-
-    # Register SIGINT and SIGTERM handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGQUIT, signal_handler)
-
-
 @click.command()
 @click.argument("bento_identifier", type=click.STRING, required=False, default=".")
 @click.option("--service-name", type=click.STRING, required=False, default="")
@@ -146,9 +132,6 @@ def main(
     from bentoml._internal.context import server_context
 
     from dynamo.sdk.lib.logging import configure_server_logging
-
-    # Setup signal handlers for graceful shutdown
-    setup_signal_handlers()
 
     run_id = service_name
     dynamo_context["service_name"] = service_name

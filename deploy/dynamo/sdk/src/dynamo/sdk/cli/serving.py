@@ -203,7 +203,6 @@ def serve_dynamo_graph(
         svc = svc.find_dependent_by_name(service_name)
     uds_path = tempfile.mkdtemp(prefix="dynamo-uds-")
     try:
-        # Process all services including standalong and main service
         with contextlib.ExitStack() as port_stack:
             services_to_process = {}
             if service_name:
@@ -212,13 +211,10 @@ def serve_dynamo_graph(
             else:
                 services_to_process = svc.all_services()
 
-            # Process all services
             for name, service_to_run in services_to_process.items():
-                # Skip if already in dependency map
                 if name in dependency_map:
                     continue
 
-                # Check if it's a Dynamo component
                 if not (
                     hasattr(service_to_run, "is_dynamo_component")
                     and service_to_run.is_dynamo_component()
