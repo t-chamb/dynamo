@@ -68,11 +68,28 @@ def _get_dynamo_worker_script(bento_identifier: str, svc_name: str) -> list[str]
     return args
 
 
+def extract_gpu_ids(gpu_resources: dict[str, Any]) -> list[str]:
+    """Extract GPU IDs from resource dict containing CUDA_VISIBLE_DEVICES.
+
+    Args:
+        gpu_resources: Dict containing CUDA_VISIBLE_DEVICES key
+
+    Returns:
+        List of GPU IDs as strings
+    """
+    if not gpu_resources or "CUDA_VISIBLE_DEVICES" not in gpu_resources:
+        return []
+
+    gpu_str = gpu_resources["CUDA_VISIBLE_DEVICES"]
+    return gpu_str.split(",")
+
+
 def create_dynamo_watcher(
     bento_identifier: str,
     svc: ServiceProtocol,
     uds_path: str,
     scheduler: ResourceAllocator,
+    component_resources: Dict[str, Any],
     working_dir: Optional[str] = None,
     env: Optional[Dict[str, str]] = None,
 ) -> tuple[list[Watcher], list[CircusSocket], dict[str, str]]:
@@ -97,15 +114,14 @@ def create_dynamo_watcher(
         sockets.append(socket)
 
         watcher_name = f"{namespace}_{comp_name}_{worker_idx}"
-
         worker_env_dict = resource_envs[worker_idx] if resource_envs else {}
 
+        # store a mapping of watcher_name: gpu_resources
+        component_resources[watcher_name] = worker_env_dict
+
         args = _get_dynamo_worker_script(bento_identifier, svc.name)
-
         args.extend(["--custom-component-name", watcher_name])
-
         args.extend(["--worker-env", json.dumps(worker_env_dict)])
-
         watcher_env = env.copy() if env else {}
 
         # Pass through the main service config
@@ -163,6 +179,7 @@ def serve_dynamo_graph(
     bento_id: str = ""
     namespace: str = ""
     env: dict[str, Any] = {}
+    component_resources: dict[str, Any] = {}
     if isinstance(bento_identifier, Service):
         svc = bento_identifier
         bento_id = svc.import_string
@@ -217,6 +234,7 @@ def serve_dynamo_graph(
                     service_to_run,
                     uds_path,
                     allocator,
+                    component_resources,
                     str(bento_path.absolute()),
                     env=env,
                 )
@@ -265,7 +283,6 @@ def serve_dynamo_graph(
                 raise ValueError("No namespace found for service")
 
             # Track GPU allocation for each component
-            component_resources = {}
             logger.info(f"Building component resources for {len(watchers)} watchers")
 
             for watcher in watchers:
@@ -280,20 +297,14 @@ def serve_dynamo_graph(
                 if component_name.startswith(f"{namespace}"):
                     service_name = component_name.replace(f"{namespace}_", "", 1)
 
-                # Get GPU allocation from ResourceAllocator
-                if (
-                    not worker_gpu_info
-                    and hasattr(allocator, "_service_gpu_allocations")
-                    and service_name
-                ):
-                    gpu_allocations = getattr(allocator, "_service_gpu_allocations", {})
-                    if service_name in gpu_allocations:
-                        logger.info(
-                            f"Found GPU allocation for {service_name} in ResourceAllocator: {gpu_allocations[service_name]}"
-                        )
-                        worker_gpu_info["allocated_gpus"] = gpu_allocations[
-                            service_name
-                        ]
+                # Extract the CUDA_VISIBLE_DEVICES from the key of component_resources
+                if component_name in component_resources:
+                    worker_gpu_info["allocated_gpus"] = extract_gpu_ids(
+                        component_resources[component_name]
+                    )
+                    worker_gpu_info["required_gpus"] = len(
+                        worker_gpu_info["allocated_gpus"]
+                    )
 
                 # Store final worker GPU info
                 component_resources[component_name] = worker_gpu_info
