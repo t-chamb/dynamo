@@ -13,18 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This will overwrite the llm_api_config.yaml
+# This will overwrite the llm_api_config.yaml config for TRTLLM workers.
+# We can use this config to provide different configs for prefill and decode workers.
 
-# TODO: Specifying the context and generation servers in the config file is
-# bit confusing. Investigate if we can clean this up.
-
-hostname: localhost
-port: 8080
-trust_remote_code: true
-backend: pytorch
-
-context_servers:
-  num_instances: 1
+prefill_workers:
   tensor_parallel_size: 1
   max_num_tokens: 10240
   max_batch_size: 16
@@ -34,11 +26,8 @@ context_servers:
   pytorch_backend_config:
     enable_overlap_scheduler: false
     use_cuda_graph: false
-  urls:
-      - "localhost:8001"
 
-generation_servers:
-  num_instances: 1
+decode_workers:
   tensor_parallel_size: 1
   max_num_tokens: 256
   max_batch_size: 256
@@ -47,5 +36,3 @@ generation_servers:
   pytorch_backend_config:
     enable_overlap_scheduler: true
     use_cuda_graph: false
-  urls:
-      - "localhost:8002"
