@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-model=neuralmagic/DeepSeek-R1-Distill-Llama-70B-FP8-dynamic
+#model=neuralmagic/DeepSeek-R1-Distill-Llama-70B-FP8-dynamic
+model=deepseek-ai/DeepSeek-R1
 
 # Input Sequence Length (isl) 3000 and Output Sequence Length (osl) 150 are
 # selected for chat use case. Note that for other use cases, the results and
@@ -23,8 +24,8 @@ isl=3000
 osl=150
 
 # Concurrency levels to test
-for concurrency in 1 2 4 8 16 32 64 128 256; do
-
+#for concurrency in 1; do
+for concurrency in 1 2 4 8 16 32 64 128 256 512; do
   genai-perf profile \
     --model ${model} \
     --tokenizer ${model} \
@@ -32,7 +33,7 @@ for concurrency in 1 2 4 8 16 32 64 128 256; do
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
-    --url http://localhost:8000 \
+    --url localhost:8000 \
     --synthetic-input-tokens-mean ${isl} \
     --synthetic-input-tokens-stddev 0 \
     --output-tokens-mean ${osl} \

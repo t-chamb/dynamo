@@ -34,11 +34,12 @@ Processor:
 VllmWorker:
   remote-prefill: true
   conditional-disagg: false
+  tensor-parallel-size: 32
   ServiceArgs:
     workers: 1
     resources:
       gpu: 16
-  common-configs: [model, block-size, max-model-len, kv-transfer-config, tensor-parallel-size, disable-log-requests, gpu-memory-utilization, max-num-batched-tokens]
+  common-configs: [model, block-size, max-model-len, kv-transfer-config, disable-log-requests, gpu-memory-utilization, max-num-batched-tokens]
 
 PrefillWorker:
   ServiceArgs:
