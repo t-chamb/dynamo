@@ -129,15 +129,14 @@ class LocalConnector(PlannerConnector):
 
         watcher_name = f"{self.namespace}_{component_name}_{max_suffix + 1}"
 
-        if component_name not in [
-            c.replace(f"{self.namespace}_", "") for c in state["components"]
-        ]:
+        # Check if component exists by looking for namespace_componentname prefix
+        if not any(c.startswith(f"{self.namespace}_{component_name}_") for c in state["components"]):
             raise ValueError(
                 f"Component {component_name} not found in state configuration"
             )
 
         # Get base command and config
-        component_info = state["components"][f"{self.namespace}_{component_name}"]
+        component_info = state["components"][f"{self.namespace}_{component_name}_0"]
         base_cmd = component_info["cmd"].split("--worker-env")[0].strip()
         service_config = state["environment"].get("DYNAMO_SERVICE_CONFIG")
 
@@ -153,8 +152,7 @@ class LocalConnector(PlannerConnector):
         watcher_env["DYNAMO_SERVICE_CONFIG"] = service_config
 
         # Build worker env list and command
-        worker_env_list = [watcher_env]
-        worker_env_arg = json.dumps(worker_env_list)
+        worker_env_arg = json.dumps(watcher_env)
         # We add a custom component name to ensure that the lease is attatched to this specific watcher
         full_cmd = f"{base_cmd} --worker-env '{worker_env_arg}' --custom-component-name '{watcher_name}'"
 
