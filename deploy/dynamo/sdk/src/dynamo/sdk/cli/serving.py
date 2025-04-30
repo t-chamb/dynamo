@@ -35,7 +35,6 @@ from simple_di import inject
 from dynamo.sdk.cli.circus import CircusRunner
 
 from .allocator import NVIDIA_GPU, ResourceAllocator
-from .circus import _get_server_socket
 from .utils import (
     DYN_LOCAL_STATE_DIR,
     ServiceProtocol,
@@ -94,12 +93,11 @@ def create_dynamo_watcher(
     env: Optional[Dict[str, str]] = None,
 ) -> tuple[list[Watcher], list[CircusSocket], dict[str, str]]:
     """Create a watcher for a Dynamo service in the dependency graph"""
+    from .circus import _get_server_socket
     from dynamo.sdk.cli.circus import create_circus_watcher
 
     num_workers, resource_envs = scheduler.get_resource_envs(svc)
     namespace, comp_name = svc.dynamo_address()
-
-    uri, socket = _get_server_socket(svc, uds_path)
 
     watchers = []
     sockets = []
@@ -110,7 +108,7 @@ def create_dynamo_watcher(
 
     # create singleton watcher per worker
     for worker_idx in range(num_workers):
-        uri, socket = _get_server_socket(svc, uds_path)
+        uri, socket = _get_server_socket(svc, uds_path, worker_idx)
         sockets.append(socket)
 
         watcher_name = f"{namespace}_{comp_name}_{worker_idx}"
@@ -146,7 +144,7 @@ def create_dynamo_watcher(
         watcher = create_circus_watcher(
             name=watcher_name,
             args=args,
-            numprocesses=1,
+            singleton=True,
             working_dir=working_dir,
             env=watcher_env,
         )
