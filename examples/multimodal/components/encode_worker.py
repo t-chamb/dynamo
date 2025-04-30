@@ -22,6 +22,7 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, LlavaForConditionalGeneration
 from utils.protocol import EncodeRequest, EncodeResponse
+from utils.vllm import parse_vllm_args
 
 from dynamo.sdk import dynamo_endpoint, service
 
@@ -38,8 +39,9 @@ logger = logging.getLogger(__name__)
 )
 class EncodeWorker:
     def __init__(self) -> None:
-        # TODO: Parse the model from the config
-        self.MODEL_ID = "llava-hf/llava-1.5-7b-hf"
+        class_name = self.__class__.__name__
+        self.engine_args = parse_vllm_args(class_name, "")
+        self.MODEL_ID = self.engine_args.model
 
         self.image_processor = AutoImageProcessor.from_pretrained(
             self.MODEL_ID, trust_remote_code=True
@@ -66,9 +68,13 @@ class EncodeWorker:
             ).model_dump_json()
 
     def open_image(self, image: str) -> Image.Image:
-        if image.startswith("http") or image.startswith("https"):
-            response = requests.get(image)
-            image_data = Image.open(BytesIO(response.content)).convert("RGB")
-        else:
-            image_data = Image.open(image).convert("RGB")
+        try:
+            if image.startswith("http") or image.startswith("https"):
+                response = requests.get(image)
+                image_data = Image.open(BytesIO(response.content)).convert("RGB")
+            else:
+                image_data = Image.open(image).convert("RGB")
+        except Exception as e:
+            logger.error(f"Error opening image: {e}")
+            raise e
         return image_data

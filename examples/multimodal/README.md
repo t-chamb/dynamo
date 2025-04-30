@@ -15,15 +15,27 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# LLM Deployment Examples
+# Multimodal Deployment Examples
 
-This directory contains examples and reference implementations for deploying Multimodal pipeline with Dynamo aggregated serving.
+This directory contains examples and reference implementations for deploying a multimodal model with Dynamo.
 
-<!-- TODO: Add more details -->
+## Components
+
+- workers: For aggregated serving, we have two workers, [encode_worker](components/encode_worker.py) for encoding and [vllm_worker](components/worker.py) for prefilling and decoding.
+- processor: Tokenizes the prompt and passes it to the vllm worker.
+- frontend: Http endpoint to handle incoming requests.
+
 
 #### Multimodal Aggregated serving
+
+In this deployment, we have two workers, [encode_worker](components/encode_worker.py) and [vllm_worker](components/worker.py).
+The encode worker is responsible for encoding the image and passing the embeddings to the vllm worker via NATS.
+The vllm worker then prefills and decodes the prompt, just like the [LLM aggregated serving](../llm/README.md) example.
+By disagregating the encoding from the prefilling and decoding, we can have a more flexible deployment and scale the
+encode worker independently from the prefilling and decoding workers if needed.
+
 ```bash
-cd $DYNAMO_HOME/examples/multimodal_agg
+cd $DYNAMO_HOME/examples/multimodal
 dynamo serve graphs.agg:Frontend -f ./configs/agg.yaml
 ```
 
@@ -31,16 +43,16 @@ dynamo serve graphs.agg:Frontend -f ./configs/agg.yaml
 
 In another terminal:
 ```bash
-# this test request has around 200 tokens isl
-
-curl -X POST 'http://localhost:3000/generate' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: multipart/form-data' \
-  -F 'model=llava-hf/llava-1.5-7b-hf' \
-  -F 'image=http://images.cocodataset.org/test2017/000000155781.jpg' \
-  -F 'prompt=Describe the image' \
-  -F 'max_tokens=300' | jq
-
+curl -X 'POST' \
+  'http://localhost:8000/generate' \
+  -H 'accept: text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "model":"llava-hf/llava-1.5-7b-hf",
+  "image":"http://images.cocodataset.org/test2017/000000155781.jpg",
+  "prompt":"Describe the image",
+  "max_tokens":300
+}' | jq
 ```
 
 You should see a response similar to this:

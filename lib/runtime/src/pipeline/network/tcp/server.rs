@@ -147,7 +147,7 @@ impl TcpStreamServer {
                 PipelineError::Generic(format!("Failed to start TcpStreamServer: {}", e))
             })?;
 
-        tracing::info!("tcp transport service on {}:{}", local_ip, local_port);
+        tracing::debug!("tcp transport service on {local_ip}:{local_port}");
 
         Ok(Arc::new(Self {
             local_ip,
@@ -504,6 +504,7 @@ async fn tcp_listener(
                 }
 
                 _ = context.stopped(), if can_stop => {
+                    tracing::trace!("context stop signal received; shutting down");
                     can_stop = false;
                     control_tx.send(ControlMessage::Stop).await.expect("the control channel should not be closed");
                 }

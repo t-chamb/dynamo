@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::ValueEnum;
-use dynamo_runtime::component::RouterMode as RuntimeRouterMode;
+use dynamo_runtime::pipeline::RouterMode as RuntimeRouterMode;
 
 /// Required options depend on the in and out choices
 #[derive(clap::Parser, Debug, Clone)]
@@ -46,6 +46,10 @@ pub struct Flags {
     #[arg(long)]
     pub model_name: Option<String>,
 
+    /// Verbose output (-v for debug, -vv for trace)
+    #[arg(short = 'v', action = clap::ArgAction::Count, default_value_t = 0)]
+    pub verbosity: u8,
+
     /// llamacpp only
     ///
     /// The path to the tokenizer and model config because:
@@ -55,7 +59,7 @@ pub struct Flags {
     #[arg(long)]
     pub model_config: Option<PathBuf>,
 
-    /// sglang, vllm, trtllm
+    /// sglang, vllm
     ///
     /// How many GPUs to use at once, total across all nodes.
     /// This must divide by num_nodes, and each node must use the same number of GPUs.
@@ -98,8 +102,8 @@ pub struct Flags {
     /// If using `out=dyn://..` with multiple backends, this says how to route the requests.
     ///
     /// Mostly interesting for KV-aware routing.
-    /// Defaults to RouterMode::Random
-    #[arg(long, default_value = "random")]
+    /// Defaults to RouterMode::RoundRobin
+    #[arg(long, default_value = "round-robin")]
     pub router_mode: RouterMode,
 
     /// Internal use only.
@@ -121,6 +125,17 @@ pub struct Flags {
     /// Contains a mapping of parameter names to values.
     #[arg(long)]
     pub extra_engine_args: Option<PathBuf>,
+
+    /// Path to a JSON file containing default request fields.
+    /// These fields will be merged with each request, but can be overridden by the request.
+    /// Example file contents:
+    /// {
+    ///     "model": "Qwen2.5-3B-Instruct",
+    ///     "temperature": 0.7,
+    ///     "max_completion_tokens": 4096
+    /// }
+    #[arg(long)]
+    pub request_template: Option<PathBuf>,
 
     /// Everything after a `--`.
     /// These are the command line arguments to the python engine when using `pystr` or `pytok`.

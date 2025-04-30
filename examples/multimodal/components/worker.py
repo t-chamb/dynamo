@@ -15,13 +15,10 @@
 
 import asyncio
 import logging
-import os
 import signal
 
 import torch
-from components.disagg_router import PyDisaggregatedRouter
 from components.encode_worker import EncodeWorker
-from components.prefill_worker import PrefillWorker
 from utils.logging import check_required_workers
 from utils.protocol import (
     EncodeRequest,
@@ -51,57 +48,26 @@ logger = logging.getLogger(__name__)
     workers=1,
 )
 class VllmWorker:
-    prefill_worker = depends(PrefillWorker)
     encode_worker = depends(EncodeWorker)
 
     def __init__(self):
         self.client = None
         self.min_workers = 1
-        self.disaggregated_router: PyDisaggregatedRouter = None  # type: ignore
         class_name = self.__class__.__name__
         self.engine_args = parse_vllm_args(class_name, "")
-        # Set "trust_remote_code" to True to allow loading models with custom tokens
-        # TODO: Add documentation for this
-        # self.engine_args.trust_remote_code = True
         self.do_remote_prefill = self.engine_args.remote_prefill
         self.model_name = (
             self.engine_args.served_model_name
             if self.engine_args.served_model_name is not None
             else "vllm"
         )
-        self._prefill_queue_nats_server = os.getenv(
-            "NATS_SERVER", "nats://localhost:4222"
-        )
-        self._prefill_queue_stream_name = self.model_name
-        logger.info(
-            f"Prefill queue: {self._prefill_queue_nats_server}:{self._prefill_queue_stream_name}"
-        )
 
         if self.engine_args.remote_prefill:
-            if self.engine_args.enable_chunked_prefill is not False:
-                logger.info("Chunked prefill is not supported yet, setting to False")
-                self.engine_args.enable_chunked_prefill = False
+            logger.warning(
+                "This example uses local prefill, setting remote prefill to False"
+            )
+            self.engine_args.remote_prefill = False
 
-            if self.engine_args.preemption_mode != "swap":
-                logger.info("Preemption mode is not supported yet, setting to swap")
-                self.engine_args.preemption_mode = "swap"
-
-            if self.engine_args.pipeline_parallel_size != 1:
-                logger.info("Pipeline parallel size is not supported yet, setting to 1")
-                self.engine_args.pipeline_parallel_size = 1
-
-        if self.engine_args.router == "kv":
-            if not self.engine_args.enable_prefix_caching:
-                logger.info(
-                    "When using KV router, prefix caching must be enabled, setting to True"
-                )
-                self.engine_args.enable_prefix_caching = True
-
-            VLLM_WORKER_ID = dynamo_context["endpoints"][0].lease_id()
-            os.environ["VLLM_WORKER_ID"] = str(VLLM_WORKER_ID)
-            os.environ["VLLM_KV_NAMESPACE"] = "dynamo"
-            os.environ["VLLM_KV_COMPONENT"] = class_name
-            logger.info(f"Generate endpoint ID: {VLLM_WORKER_ID}")
         self.metrics_publisher = KvMetricsPublisher()
 
         signal.signal(signal.SIGTERM, self.shutdown_vllm_engine)
@@ -116,24 +82,12 @@ class VllmWorker:
             self.engine_client = await self._engine_context.__aenter__()
         else:
             raise RuntimeError("Failed to initialize engine client")
+
         if self.engine_args.router == "kv":
-            assert self.engine_client is not None, "engine_client was not initialized"
-            self.engine_client.set_metrics_publisher(self.metrics_publisher)
-            # Initially send dummy metrics to kick start,
-            # vLLM will not update stat until forward pass is triggered
-            self.metrics_publisher.publish(
-                0,  # request_active_slots
-                1024,  # request_total_slots
-                0,  # kv_active_blocks
-                1024,  # kv_total_blocks
-                0,  # num_requests_waiting
-                0.0,  # gpu_cache_usage_perc
-                0.0,  # gpu_prefix_cache_hit_rate
+            logger.info(
+                "Multimodal requests are not supported for kv router mode, falling back to round-robin"
             )
-            task = asyncio.create_task(self.create_metrics_publisher_endpoint())
-            task.add_done_callback(
-                lambda _: logger.info("metrics publisher endpoint created")
-            )
+            self.engine_args.router = "round-robin"
 
         runtime = dynamo_context["runtime"]
 

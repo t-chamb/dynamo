@@ -18,9 +18,8 @@ use std::{future::Future, pin::Pin};
 use std::{io::Read, sync::Arc};
 
 use dynamo_llm::{
-    backend::ExecutionContext, kv_router::publisher::KvMetricsPublisher,
+    backend::ExecutionContext, engines::StreamingEngine, kv_router::publisher::KvMetricsPublisher,
     model_card::model::ModelDeploymentCard,
-    types::openai::chat_completions::OpenAIChatCompletionsStreamingEngine,
 };
 use dynamo_runtime::{protocols::Endpoint, DistributedRuntime};
 
@@ -31,6 +30,7 @@ mod input;
 #[cfg(any(feature = "vllm", feature = "sglang"))]
 mod net;
 mod opt;
+pub use dynamo_llm::request_template::RequestTemplate;
 pub use opt::{Input, Output};
 
 /// How we identify a namespace/component/endpoint URL.
@@ -60,7 +60,8 @@ pub enum EngineConfig {
     /// A Full service engine does it's own tokenization and prompt formatting.
     StaticFull {
         service_name: String,
-        engine: OpenAIChatCompletionsStreamingEngine,
+        engine: Arc<dyn StreamingEngine>,
+        card: Box<ModelDeploymentCard>,
     },
 
     /// A core engine expects to be wrapped with pre/post processors that handle tokenization.
@@ -124,10 +125,7 @@ pub async fn run(
     // If it's an HF repo download it
     if let Some(inner_model_path) = model_path.as_ref() {
         if !inner_model_path.exists() {
-            model_name = inner_model_path
-                .iter()
-                .next_back()
-                .map(|s| s.to_string_lossy().to_string());
+            model_name = Some(inner_model_path.display().to_string());
             model_path = Some(hub::from_hf(inner_model_path).await?);
         }
     }
@@ -176,14 +174,26 @@ pub async fn run(
         }
         // Otherwise we don't have one, but we only need it if we're tokenizing
         _ => {
-            tracing::debug!("No model card path provided (neither --model-config nor a directory in --model-path)");
+            tracing::debug!(
+                "No model card path provided (neither --model-config nor --model-path)"
+            );
             None
         }
     };
 
-    // If we are in a distributed system, we need to know our component upfront
     let dyn_input = match &in_opt {
         Input::Endpoint(endpoint_path) => {
+            if model_path.as_ref().map(|mp| mp.is_file()).unwrap_or(false)
+                && flags.model_config.is_none()
+            {
+                // TODO We need to convert tokenizer extract from GGUF file into something we can
+                // publish to NATS. Ideally `tokenizer.json` directly, but otherwise an
+                // intermediate format.
+                tracing::error!("Serving GGUF files in a distributed system requires `--model-config <hf-repo-dir>` so that we can find the tokenzier config");
+                return Ok(());
+            }
+
+            // If we are in a distributed system, we need to know our component upfront
             let distributed_runtime = DistributedRuntime::from_settings(runtime.clone()).await?;
             let endpoint_id: Endpoint = endpoint_path.parse()?;
             Some(DynInput {
@@ -197,6 +207,14 @@ pub async fn run(
     #[cfg(any(feature = "vllm", feature = "sglang"))]
     let mut extra: Option<Pin<Box<dyn Future<Output = ()> + Send>>> = None; // vllm and sglang sub-process
 
+    let template = if let Some(path) = flags.request_template.as_ref() {
+        let template = RequestTemplate::load(path)?;
+        tracing::debug!("Using request template: {template:?}");
+        Some(template)
+    } else {
+        None
+    };
+
     // Create the engine matching `out`
     let engine_config = match out_opt {
         Output::EchoFull => {
@@ -206,6 +224,7 @@ pub async fn run(
                 );
             };
             EngineConfig::StaticFull {
+                card: Box::new(ModelDeploymentCard::with_name_only(&model_name)),
                 service_name: model_name,
                 engine: dynamo_llm::engines::make_engine_full(),
             }
@@ -216,7 +235,10 @@ pub async fn run(
                     "out=echo_core need to find the tokenizer. Pass flag --model-path <path>"
                 );
             };
-            card.requires_preprocessing = true;
+
+            // TODO: Switch to `true` once pre-processing moves ingress side
+            card.requires_preprocessing = false;
+
             EngineConfig::StaticCore {
                 service_name: card.service_name.clone(),
                 engine: dynamo_llm::engines::make_engine_core(),
@@ -236,6 +258,7 @@ pub async fn run(
                 unreachable!("We checked model_path earlier, and set model_name from model_path");
             };
             EngineConfig::StaticFull {
+                card: Box::new(ModelDeploymentCard::with_name_only(&model_name)),
                 service_name: model_name,
                 engine: dynamo_engine_mistralrs::make_engine(&model_path).await?,
             }
@@ -291,7 +314,7 @@ pub async fn run(
             }
         }
         #[cfg(feature = "vllm")]
-        Output::Vllm => {
+        Output::Vllm0_7 => {
             if flags.base_gpu_id != 0 {
                 anyhow::bail!("vllm does not support base_gpu_id. Set environment variable CUDA_VISIBLE_DEVICES instead.");
             }
@@ -331,14 +354,16 @@ pub async fn run(
                         .component(KV_PUBLISHER_COMPONENT)?;
                     let kvp = Arc::new(KvMetricsPublisher::new()?);
                     let kvp_inner = kvp.clone();
-                    tokio::spawn(async move { kvp_inner.create_endpoint(kvp_component).await });
+                    tokio::spawn(
+                        async move { kvp_inner.create_endpoint(kvp_component, None).await },
+                    );
                     Some(kvp)
                 } else {
                     None
                 };
 
                 // vllm multi-node only the leader runs vllm
-                let (engine, vllm_future) = dynamo_engine_vllm::make_leader_engine(
+                let (engine, vllm_future) = dynamo_engine_vllm0_7::make_leader_engine(
                     cancel_token.clone(),
                     &model_path,
                     &sock_prefix,
@@ -359,11 +384,47 @@ pub async fn run(
             } else {
                 // Nodes rank > 0 only run 'ray'
                 let stop_future =
-                    dynamo_engine_vllm::start_follower(cancel_token.clone(), node_conf).await?;
+                    dynamo_engine_vllm0_7::start_follower(cancel_token.clone(), node_conf).await?;
                 extra = Some(Box::pin(stop_future));
                 EngineConfig::None
             }
         }
+
+        #[cfg(feature = "vllm")]
+        Output::Vllm | Output::Vllm0_8 => {
+            if flags.base_gpu_id != 0 {
+                anyhow::bail!("vllm does not support base_gpu_id. Set environment variable CUDA_VISIBLE_DEVICES instead.");
+            }
+            let Some(model_path) = model_path else {
+                anyhow::bail!(
+                    "out=vllm requires flag --model-path=<full-path-to-hf-repo-or-model-gguf>"
+                );
+            };
+            let Some(card) = maybe_card.clone() else {
+                anyhow::bail!(
+                    "Unable to build tokenizer. out=vllm requires --model-path to be an HF repo with fast tokenizer (tokenizer.json) or a GGUF file"
+                );
+            };
+            let node_conf = dynamo_llm::engines::MultiNodeConfig {
+                num_nodes: flags.num_nodes,
+                node_rank: flags.node_rank,
+                leader_addr: flags.leader_addr.clone().unwrap_or_default(),
+            };
+            let engine = dynamo_engine_vllm0_8::make_engine(
+                cancel_token.clone(),
+                &model_path,
+                node_conf,
+                flags.tensor_parallel_size,
+                flags.extra_engine_args.clone(),
+            )
+            .await?;
+            EngineConfig::StaticCore {
+                service_name: card.service_name.clone(),
+                engine,
+                card: Box::new(card),
+            }
+        }
+
         #[cfg(feature = "llamacpp")]
         Output::LlamaCpp => {
             let Some(model_path) = model_path else {
@@ -385,40 +446,19 @@ pub async fn run(
                 card: Box::new(card),
             }
         }
-        #[cfg(feature = "trtllm")]
-        Output::TrtLLM => {
-            let Some(model_path) = model_path else {
-                anyhow::bail!("out=trtllm requires flag --model-path=<full-path-to-model-dir>");
-            };
-            if !model_path.is_dir() {
-                anyhow::bail!(
-                    "--model-path should point at a directory containing `.engine` files."
-                );
-            }
-            // Safety: Earlier we build maybe_card from model_path, which we checked right above
-            let card = maybe_card.clone().unwrap();
-            let engine = dynamo_engine_trtllm::make_engine(
-                model_path.display(),
-                flags.tensor_parallel_size,
-            )?;
-            EngineConfig::StaticCore {
-                service_name: card.service_name.clone(),
-                engine,
-                card: Box::new(card),
-            }
-        }
         #[cfg(feature = "python")]
         Output::PythonStr(path_str) => {
-            let Some(model_name) = model_name else {
+            let Some(model_name) = &model_name else {
                 anyhow::bail!("Provide model service name as `--model-name <this>`");
             };
-            let py_args = flags.as_vec(&path_str, &model_name);
+            let py_args = flags.as_vec(&path_str, model_name);
             let p = std::path::PathBuf::from(path_str);
             let engine =
                 dynamo_engine_python::make_string_engine(cancel_token.clone(), &p, py_args).await?;
             EngineConfig::StaticFull {
-                service_name: model_name,
+                service_name: model_name.to_string(),
                 engine,
+                card: Box::new(ModelDeploymentCard::with_name_only(model_name)),
             }
         }
         #[cfg(feature = "python")]
@@ -443,19 +483,33 @@ pub async fn run(
 
     match in_opt {
         Input::Http => {
-            crate::input::http::run(runtime.clone(), flags, engine_config).await?;
+            crate::input::http::run(runtime.clone(), flags, engine_config, template).await?;
         }
         Input::Text => {
-            crate::input::text::run(runtime.clone(), flags, None, engine_config).await?;
+            crate::input::text::run(runtime.clone(), flags, None, engine_config, template).await?;
         }
         Input::Stdin => {
             let mut prompt = String::new();
             std::io::stdin().read_to_string(&mut prompt).unwrap();
-            crate::input::text::run(runtime.clone(), flags, Some(prompt), engine_config).await?;
+            crate::input::text::run(
+                runtime.clone(),
+                flags,
+                Some(prompt),
+                engine_config,
+                template,
+            )
+            .await?;
         }
         Input::Batch(path) => {
-            crate::input::batch::run(runtime.clone(), flags, maybe_card, path, engine_config)
-                .await?;
+            crate::input::batch::run(
+                runtime.clone(),
+                flags,
+                maybe_card,
+                path,
+                engine_config,
+                template,
+            )
+            .await?;
         }
         Input::Endpoint(path) => {
             let Some(dyn_input) = dyn_input else {

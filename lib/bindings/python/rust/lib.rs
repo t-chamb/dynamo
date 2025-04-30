@@ -146,7 +146,32 @@ struct Endpoint {
 #[pyclass]
 #[derive(Clone)]
 struct Client {
-    inner: rs::component::Client<serde_json::Value, serde_json::Value>,
+    router: rs::pipeline::PushRouter<serde_json::Value, serde_json::Value>,
+}
+
+#[pyclass]
+#[derive(Clone)]
+struct PyLease {
+    inner: rs::transports::etcd::Lease,
+}
+
+#[pymethods]
+impl PyLease {
+    fn id(&self) -> i64 {
+        self.inner.id()
+    }
+
+    fn revoke(&self) {
+        self.inner.revoke();
+    }
+
+    fn is_valid<'p>(&self, py: Python<'p>) -> PyResult<Bound<'p, PyAny>> {
+        let lease = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let is_valid = lease.is_valid().await.map_err(to_pyerr)?;
+            Ok(is_valid)
+        })
+    }
 }
 
 #[pymethods]
@@ -356,21 +381,61 @@ impl Component {
             Ok(())
         })
     }
+
+    #[pyo3(signature = (ttl=1))]
+    fn create_service_with_custom_lease<'p>(
+        &self,
+        py: Python<'p>,
+        ttl: i64,
+    ) -> PyResult<Bound<'p, PyAny>> {
+        let component = self.inner.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            // Get the etcd client from the runtime
+            let etcd_client = component
+                .drt()
+                .etcd_client()
+                .ok_or_else(|| to_pyerr("etcd client not found"))?;
+
+            // Create a custom lease with the specified TTL
+            let custom_lease = etcd_client.create_lease(ttl).await.map_err(to_pyerr)?;
+
+            tracing::info!("created custom lease: {:?}", custom_lease);
+
+            // Create a service
+            // TODO: tie the lease to service instead of endpoint
+            let _service = component
+                .service_builder()
+                .create()
+                .await
+                .map_err(to_pyerr)?;
+
+            // Return the lease
+            Ok(PyLease {
+                inner: custom_lease,
+            })
+        })
+    }
 }
 
 #[pymethods]
 impl Endpoint {
+    #[pyo3(signature = (generator, lease=None))]
     fn serve_endpoint<'p>(
         &self,
         py: Python<'p>,
         generator: PyObject,
+        lease: Option<&PyLease>,
     ) -> PyResult<Bound<'p, PyAny>> {
         let engine = Arc::new(engine::PythonAsyncEngine::new(
             generator,
             self.event_loop.clone(),
         )?);
         let ingress = JsonServerStreamingIngress::for_engine(engine).map_err(to_pyerr)?;
-        let builder = self.inner.endpoint_builder().handler(ingress);
+        let mut builder = self.inner.endpoint_builder().handler(ingress);
+        if lease.is_some() {
+            builder = builder.lease(lease.map(|l| l.inner.clone()));
+        }
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             builder.start().await.map_err(to_pyerr)?;
             Ok(())
@@ -380,11 +445,17 @@ impl Endpoint {
     fn client<'p>(&self, py: Python<'p>) -> PyResult<Bound<'p, PyAny>> {
         let inner = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let client = inner
-                .client::<serde_json::Value, serde_json::Value>()
+            let client = inner.client().await.map_err(to_pyerr)?;
+            let push_router =
+                rs::pipeline::PushRouter::<serde_json::Value, serde_json::Value>::from_client(
+                    client,
+                    Default::default(),
+                )
                 .await
                 .map_err(to_pyerr)?;
-            Ok(Client { inner: client })
+            Ok(Client {
+                router: push_router,
+            })
         })
     }
 
@@ -473,19 +544,31 @@ impl EtcdClient {
             Ok(py_list)
         })
     }
+
+    fn revoke_lease<'p>(&self, py: Python<'p>, lease_id: i64) -> PyResult<Bound<'p, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.revoke_lease(lease_id).await.map_err(to_pyerr)?;
+            Ok(())
+        })
+    }
 }
 
 #[pymethods]
 impl Client {
     /// Get list of current endpoints
     fn endpoint_ids(&self) -> Vec<i64> {
-        self.inner.endpoint_ids()
+        self.router.client.endpoint_ids()
     }
 
     fn wait_for_endpoints<'p>(&self, py: Python<'p>) -> PyResult<Bound<'p, PyAny>> {
-        let inner = self.inner.clone();
+        let inner = self.router.client.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            inner.wait_for_endpoints().await.map_err(to_pyerr)
+            inner
+                .wait_for_endpoints()
+                .await
+                .map(|v| v.into_iter().map(|cei| cei.id()).collect::<Vec<i64>>())
+                .map_err(to_pyerr)
         })
     }
 
@@ -497,7 +580,7 @@ impl Client {
         request: PyObject,
         annotated: Option<bool>,
     ) -> PyResult<Bound<'p, PyAny>> {
-        if self.inner.is_static() {
+        if self.router.client.is_static() {
             self.r#static(py, request, annotated)
         } else {
             self.random(py, request, annotated)
@@ -516,7 +599,7 @@ impl Client {
         let annotated = annotated.unwrap_or(false);
 
         let (tx, rx) = tokio::sync::mpsc::channel(32);
-        let client = self.inner.clone();
+        let client = self.router.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let stream = client.round_robin(request.into()).await.map_err(to_pyerr)?;
@@ -540,7 +623,7 @@ impl Client {
         let annotated = annotated.unwrap_or(false);
 
         let (tx, rx) = tokio::sync::mpsc::channel(32);
-        let client = self.inner.clone();
+        let client = self.router.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let stream = client.random(request.into()).await.map_err(to_pyerr)?;
@@ -565,7 +648,7 @@ impl Client {
         let annotated = annotated.unwrap_or(false);
 
         let (tx, rx) = tokio::sync::mpsc::channel(32);
-        let client = self.inner.clone();
+        let client = self.router.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let stream = client
@@ -594,7 +677,7 @@ impl Client {
         let annotated = annotated.unwrap_or(false);
 
         let (tx, rx) = tokio::sync::mpsc::channel(32);
-        let client = self.inner.clone();
+        let client = self.router.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let stream = client.r#static(request.into()).await.map_err(to_pyerr)?;
@@ -640,6 +723,7 @@ async fn process_stream(
         // Send the PyObject through the channel or log an error
         if let Err(e) = tx.send(annotated).await {
             tracing::error!("Failed to send response: {:?}", e);
+            break;
         }
 
         if is_error {
