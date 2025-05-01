@@ -77,6 +77,56 @@ class LeaseConfig:
     ttl: int = 1  # seconds
 
 
+def _is_dynamo(func: t.Callable | None) -> bool:
+    """True if the function is a DynamoEndpoint instance."""
+    return isinstance(func, DynamoEndpoint)
+
+def _validate_dynamo_interface(cls: type) -> None:
+    """
+    Validate that *cls* fully implements every @abstract_dynamo_endpoint
+    declared in its ancestors and that each implementation is
+    decorated with @dynamo_endpoint.
+    """
+    # Collect abstract endpoint names from the full MRO
+    required: t.Set[str] = {
+        name
+        for base in cls.mro()
+        for name, val in base.__dict__.items()
+        if getattr(val, "__is_abstract_dynamo__", False)
+    }
+
+    missing, undecorated, not_callable = [], [], []
+
+    for name in required:
+        impl = getattr(cls, name, None)  # walk MRO (handles grand-parent impls)
+        if impl is None:
+            missing.append(name)
+            continue
+
+        # guard against attribute shadowing with a non-callable
+        if not callable(impl):
+            not_callable.append((name, type(impl).__name__))
+            continue
+
+        if not _is_dynamo(impl):
+            undecorated.append(name)
+
+    problems = []
+    if missing:
+        problems.append(f"missing implementation(s): {', '.join(missing)}")
+    if undecorated:
+        problems.append(
+            f"method(s) not decorated with @dynamo_endpoint: {', '.join(undecorated)}"
+        )
+    if not_callable:
+        problems.append(
+            ", ".join(f"{n} must be callable, got {kind}" for n, kind in not_callable)
+        )
+
+    if problems:
+        raise TypeError(f"{cls.__name__} violates Dynamo interface — " + "; ".join(problems))
+
+
 class DynamoService(Service[T]):
     """A custom service class that extends BentoML's base Service with Dynamo capabilities"""
 
@@ -336,6 +386,10 @@ def service(
     def decorator(inner: type[T]) -> DynamoService[T]:
         if isinstance(inner, Service):
             raise TypeError("service() decorator can only be applied once")
+        
+        # Validate interface implementation before creating the service
+        _validate_dynamo_interface(inner)
+        
         return DynamoService(
             config=config,
             inner=inner,

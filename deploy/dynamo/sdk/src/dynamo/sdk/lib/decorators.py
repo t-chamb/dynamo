@@ -18,6 +18,7 @@ from __future__ import annotations
 import typing as t
 from functools import wraps
 from typing import Any, get_type_hints
+import abc
 
 from pydantic import BaseModel
 
@@ -88,3 +89,13 @@ def async_on_start(func: t.Callable) -> t.Callable:
     # Mark the function as a startup hook
     setattr(func, "__dynamo_startup_hook__", True)
     return func
+
+
+class DynamoServiceInterface(abc.ABC):
+    """Base class for Dynamo service interfaces."""
+    pass
+
+def abstract_dynamo_endpoint(func: t.Callable) -> t.Callable:
+    """Mark an abstract endpoint in an interface."""
+    func.__is_abstract_dynamo__ = True
+    return abc.abstractmethod(func)
