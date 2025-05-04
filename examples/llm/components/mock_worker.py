@@ -20,60 +20,27 @@ import os
 import signal
 
 from components.disagg_router import PyDisaggregatedRouter
-from components.mock_worker import MockVLLMWorker
 from components.prefill_worker import PrefillWorker
-from utils.nixl import NixlMetadataStore
 from utils.prefill_queue import PrefillQueue
 from utils.protocol import MyRequestOutput, vLLMGenerateRequest
 from utils.vllm import RouterType, parse_vllm_args
-from vllm.entrypoints.openai.api_server import (
-    build_async_engine_client_from_engine_args,
-)
 from vllm.remote_prefill import RemotePrefillParams, RemotePrefillRequest
 from vllm.sampling_params import RequestOutputKind
 
 from dynamo.llm import KvMetricsPublisher
-from dynamo.sdk import async_on_start, depends, dynamo_context, dynamo_endpoint, service
-from dynamo.sdk.lib.service import LeaseConfig
+from dynamo.sdk import async_on_start, depends, dynamo_context
 
 logger = logging.getLogger(__name__)
 
 
-@service(
-    dynamo={
-        "enabled": True,
-        "namespace": "dynamo",
-        "custom_lease": LeaseConfig(ttl=1),  # 1 second
-    },
-    resources={"gpu": 1, "cpu": "10", "memory": "20Gi"},
-    workers=1,
-)
-class VllmWorker:
+class MockVLLMWorker:
     prefill_worker = depends(PrefillWorker)
 
-    def __new__(cls, *args, **kwargs):
-        class_name = cls.__name__
-        temp = parse_vllm_args(class_name, "")
-        if temp.model == "mock":
-            try:
-                print("returning mock worker!", flush=True)
-                obj = object.__new__(MockVLLMWorker, *args, **kwargs)
-                obj.__init__(*args, **kwargs)
-                print("mock obj created!", flush=True)
-                print(obj)
-                print(dir(obj))
-                VllmWorker.generate = MockVLLMWorker.generate
-                return obj
-            except Exception as e:
-                print("error in creating object", e)
-        return super().__new__(cls, *args, **kwargs)
-
     def __init__(self):
-        print("hey!!!!!!!!!!!", flush=True)
         self.client = None
         self.disaggregated_router: PyDisaggregatedRouter = None  # type: ignore
         class_name = self.__class__.__name__
-        self.engine_args = parse_vllm_args(class_name, "")
+        self.engine_args = parse_vllm_args("VllmWorker", "")
         self.do_remote_prefill = self.engine_args.remote_prefill
         self.model_name = (
             self.engine_args.served_model_name
@@ -117,17 +84,13 @@ class VllmWorker:
         signal.signal(signal.SIGTERM, self.shutdown_vllm_engine)
         signal.signal(signal.SIGINT, self.shutdown_vllm_engine)
 
+        print("initialized!")
+        print(self.metrics_publisher)
+
     @async_on_start
     async def async_init(self):
-        print("hey!!!!!!", flush=True)
-        self._engine_context = build_async_engine_client_from_engine_args(
-            self.engine_args
-        )
-        if self._engine_context is not None:
-            self.engine_client = await self._engine_context.__aenter__()
-        else:
-            raise RuntimeError("Failed to initialize engine client")
-        self.engine_client.set_metrics_publisher(self.metrics_publisher)
+        print("in async init!", flush=True)
+        # self.engine_client.set_metrics_publisher(self.metrics_publisher)
         # Initially send dummy metrics to kick start,
         # vLLM will not update stat until forward pass is triggered
         self.metrics_publisher.publish(
@@ -146,10 +109,10 @@ class VllmWorker:
 
         runtime = dynamo_context["runtime"]
 
-        if self.engine_args.remote_prefill:
-            metadata = self.engine_client.nixl_metadata
-            metadata_store = NixlMetadataStore("dynamo", runtime)
-            await metadata_store.put(metadata.engine_id, metadata)
+        #        if self.engine_args.remote_prefill:
+        #            metadata = self.engine_client.nixl_metadata
+        #            metadata_store = NixlMetadataStore("dynamo", runtime)
+        #            await metadata_store.put("mock", metadata)
 
         if self.engine_args.conditional_disagg:
             self.disaggregated_router = PyDisaggregatedRouter(
@@ -197,17 +160,13 @@ class VllmWorker:
         return callback
 
     # TODO: use the same child lease for metrics publisher endpoint and generate endpoint
-    @dynamo_endpoint()
+    #    @dynamo_endpoint()
     async def generate(self, request: vLLMGenerateRequest):
-        logger.info(self.engine_args.model)
-        if self.engine_args.model == "mock":
-            print("here mock!!!!!")
-            async for response in MockVLLMWorker.generate(self, request):
-                print(response)
-                yield (response)
-                # yield response
-            return
         # TODO: consider prefix hit when deciding prefill locally or remotely
+
+        print("dynamo endpoint mock!")
+
+        print(request.engine_prompt, flush=True)
 
         if self.disaggregated_router is not None:
             async with PrefillQueue.get_instance(
@@ -240,18 +199,28 @@ class VllmWorker:
 
         # rust HTTP requires Delta streaming
         request.sampling_params.output_kind = RequestOutputKind.DELTA
-
-        async for response in self.engine_client.generate(
-            prompt=request.engine_prompt,
-            sampling_params=request.sampling_params,
-            request_id=request.request_id,
-            remote_prefill_params=remote_prefill_params,
-        ):
+        print(remote_prefill_params)
+        logger.info(request.engine_prompt)
+        print(request.engine_prompt, flush=True)
+        print(request, flush=True)
+        for i in range(100):
             yield MyRequestOutput(
-                request_id=response.request_id,
-                prompt=response.prompt,
-                prompt_token_ids=response.prompt_token_ids,
-                prompt_logprobs=response.prompt_logprobs,
-                outputs=response.outputs,
-                finished=response.finished,
+                request_id=request.request_id,
+                prompt=request.engine_prompt,
+                prompt_token_ids=[i],
             ).model_dump_json()
+
+        # async for response in self.engine_client.generate(
+        #     prompt=request.engine_prompt,
+        #     sampling_params=request.sampling_params,
+        #     request_id=request.request_id,
+        #     remote_prefill_params=remote_prefill_params,
+        # ):
+        #     yield MyRequestOutput(
+        #         request_id=response.request_id,
+        #         prompt=response.prompt,
+        #         prompt_token_ids=response.prompt_token_ids,
+        #         prompt_logprobs=response.prompt_logprobs,
+        #         outputs=response.outputs,
+        #         finished=response.finished,
+        #     ).model_dump_json()

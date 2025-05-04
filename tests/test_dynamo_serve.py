@@ -134,6 +134,8 @@ def dynamo_serve_process(graph_module, config_path, cwd):
     command = ["dynamo", "serve", graph_module]
     if config_path:
         command.extend(["-f", config_path])
+
+    command.extend(["--VllmWorker.model", "mock"])
     with managed_process(
         command,
         check_ports=[8000],  # Frontend port
