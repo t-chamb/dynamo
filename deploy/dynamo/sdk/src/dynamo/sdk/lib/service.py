@@ -27,8 +27,7 @@ from _bentoml_sdk.images import Image
 from _bentoml_sdk.service.config import validate
 from fastapi import FastAPI
 
-from dynamo.sdk.lib.decorators import DynamoEndpoint
-
+from dynamo.sdk.lib.decorators import DynamoEndpoint, DynamoServiceInterface
 T = TypeVar("T", bound=object)
 
 logger = logging.getLogger(__name__)
@@ -253,9 +252,51 @@ class DynamoService(Service[T]):
                 del self.dependencies[dep_key]
 
     def link(self, next_service: DynamoService):
-        """Link this service to another service, creating a pipeline."""
+        """Link this service to another service, creating a pipeline.
+        
+        This method allows linking a concrete service implementation to a service that depends on an interface.
+        It will:
+        1. Find all interface dependencies in the current service
+        2. Check if the next_service implements any of those interfaces
+        3. If exactly one match is found, override that dependency
+        4. If no matches or multiple matches are found, raise an error
+        
+        Args:
+            next_service: The concrete service implementation to link
+            
+        Raises:
+            ValueError: If no matching interface is found or if multiple matches are found
+        """
+        # Get all dependencies that may be on interfaces
+        interface_deps = [dep.on.inner for dep in self.dependencies.values() 
+                         if issubclass(dep.on.inner, DynamoServiceInterface)]
+        
+        if not interface_deps:
+            raise ValueError(f"No DynamoServiceInterfaces found to override in {self.name}")
+        
+        curr_inner = next_service.inner
+            
+        # Find interfaces that next_service implements
+        matching_interfaces = []
+        for dep in interface_deps:
+            if issubclass(curr_inner, dep):
+                matching_interfaces.append(dep)
+                
+        if not matching_interfaces:
+            raise ValueError(
+                f"{curr_inner.__name__} does not implement any interfaces required by {self.name}"
+            )
+            
+        if len(matching_interfaces) > 1:
+            interface_names = [dep.__name__ for dep in matching_interfaces]
+            raise ValueError(
+                f"{curr_inner.__name__} implements multiple interfaces required by {self.name}: {interface_names}"
+            )
+
+        # Track the linked service
         self._linked_services.append(next_service)
         LinkedServices.add((self, next_service))
+        
         return next_service
 
     def _remove_service_args(self, service_name: str):
