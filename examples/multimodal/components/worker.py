@@ -18,9 +18,12 @@ import logging
 import os
 import signal
 
+import torch
 from components.disagg_router import PyDisaggregatedRouter
-from components.prefill_worker import PrefillWorker
 from components.encode_worker import EncodeWorker
+from components.prefill_worker import PrefillWorker
+from transformers import LlavaForConditionalGeneration
+from utils.logging import check_required_workers
 from utils.nixl import NixlMetadataStore
 from utils.prefill_queue import PrefillQueue
 from utils.protocol import (
@@ -33,12 +36,9 @@ from utils.vllm import parse_vllm_args
 from vllm.entrypoints.openai.api_server import (
     build_async_engine_client_from_engine_args,
 )
+from vllm.inputs.data import TokensPrompt
 from vllm.remote_prefill import RemotePrefillParams, RemotePrefillRequest
 from vllm.sampling_params import RequestOutputKind
-from vllm.inputs.data import TokensPrompt
-import torch
-from utils.logging import check_required_workers
-from transformers import LlavaForConditionalGeneration
 
 from dynamo.llm import KvMetricsPublisher
 from dynamo.sdk import async_on_start, depends, dynamo_context, dynamo_endpoint, service
@@ -55,7 +55,6 @@ logger = logging.getLogger(__name__)
     workers=1,
 )
 class VllmWorker:
-
     # For disaggregated serving, we need to link the prefill worker to the vllm worker
     prefill_worker = depends(PrefillWorker)
     # For aggregated serving, we need to link the encode worker to the vllm worker.
@@ -145,9 +144,13 @@ class VllmWorker:
             else:
                 self.disaggregated_router = None
 
-            model = LlavaForConditionalGeneration.from_pretrained(self.engine_args.model)
+            model = LlavaForConditionalGeneration.from_pretrained(
+                self.engine_args.model
+            )
             vision_tower = model.vision_tower
-            self.embedding_size = vision_tower.vision_model.embeddings.position_embedding.num_embeddings
+            self.embedding_size = (
+                vision_tower.vision_model.embeddings.position_embedding.num_embeddings
+            )
         else:
             enc_comp_ns, enc_comp_name = EncodeWorker.dynamo_address()  # type: ignore
             self.encode_worker_client = (
@@ -228,8 +231,12 @@ class VllmWorker:
             # Since the "<image>" token is included in the prompt, the length of the prompt token ids is 7, and the number of
             # dummy tokens is embedding_size - 1.
             DUMMY_TOKEN_INDEX = 0
-            prompt_ids = request.engine_prompt["prompt_token_ids"][:7] + [DUMMY_TOKEN_INDEX] * (self.embedding_size - 1) + request.engine_prompt["prompt_token_ids"][7:]
-        
+            prompt_ids = (
+                request.engine_prompt["prompt_token_ids"][:7]
+                + [DUMMY_TOKEN_INDEX] * (self.embedding_size - 1)
+                + request.engine_prompt["prompt_token_ids"][7:]
+            )
+
         else:
             encode_generator = await self.encode_worker_client.round_robin(
                 EncodeRequest(
@@ -238,11 +245,13 @@ class VllmWorker:
             )
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             async for encode_response in encode_generator:
-                encode_output = EncodeResponse.model_validate_json(encode_response.data())
+                encode_output = EncodeResponse.model_validate_json(
+                    encode_response.data()
+                )
                 image_features = torch.tensor(
                     encode_output.image_features, device=device, dtype=torch.float16
                 )
-            
+
             remote_prefill_params = None
             logger.info(
                 f"Prefilling locally for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"

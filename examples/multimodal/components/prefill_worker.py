@@ -20,19 +20,19 @@ import os
 import signal
 import sys
 
-from pydantic import BaseModel
-from utils.nixl import NixlMetadataStore
+import torch
 from components.encode_worker import EncodeWorker
+from pydantic import BaseModel
 from utils.logging import check_required_workers
+from utils.nixl import NixlMetadataStore
 from utils.prefill_queue import PrefillQueue
+from utils.protocol import EncodeRequest, EncodeResponse
 from utils.vllm import parse_vllm_args
 from vllm.entrypoints.openai.api_server import (
     build_async_engine_client_from_engine_args,
 )
 from vllm.inputs.data import TokensPrompt
 from vllm.remote_prefill import RemotePrefillParams, RemotePrefillRequest
-import torch
-from utils.protocol import EncodeRequest, EncodeResponse
 
 from dynamo.sdk import async_on_start, depends, dynamo_context, dynamo_endpoint, service
 
@@ -166,7 +166,7 @@ class PrefillWorker:
     async def generate(self, request: RemotePrefillRequest):
         if request.multimodal_data_source["image_url"] is None:
             raise ValueError("No image url provided for prefill request")
-        
+
         encode_generator = await self.encode_worker_client.round_robin(
             EncodeRequest(
                 image_url=request.multimodal_data_source["image_url"],
@@ -206,7 +206,9 @@ class PrefillWorker:
         # The structure of the prompt will be like: "\nUSER: <image>\nDescribe the image.\nASSISTANT:".
         embedding_size = image_features.shape[1]
         padding_size = embedding_size - 1
-        prompt_token_ids = request.prompt_token_ids[:7] + request.prompt_token_ids[7 + padding_size:]
+        prompt_token_ids = (
+            request.prompt_token_ids[:7] + request.prompt_token_ids[7 + padding_size :]
+        )
         async for _ in self.engine_client.generate(
             request_id=request.request_id,
             prompt=TokensPrompt(
