@@ -202,16 +202,15 @@ class PrefillWorker:
 
         # To make sure the decode worker can pre-allocate the memory with the correct size for the prefill worker to transfer the kv cache,
         # we manually insert some placeholder dummy tokens based on the embedding size.
-        # Here we need to make sure those dummy tokens are replaced by the actual image tokens id, which is 32000.
+        # Here we need to remove those dummy tokens.
         # The structure of the prompt will be like: "\nUSER: <image>\nDescribe the image.\nASSISTANT:".
-        IMAGE_TOKEN_INDEX = 32000
         embedding_size = image_features.shape[1]
-        prompt_token_ids = request.prompt_token_ids[:6] + [IMAGE_TOKEN_INDEX] + request.prompt_token_ids[6 + embedding_size:]
+        padding_size = embedding_size - 1
+        prompt_token_ids = request.prompt_token_ids[:7] + request.prompt_token_ids[7 + padding_size:]
         async for _ in self.engine_client.generate(
             request_id=request.request_id,
             prompt=TokensPrompt(
                 prompt_token_ids=prompt_token_ids,
-                # prompt_token_ids=request.prompt_token_ids,
                 multi_modal_data={"image": image_features},
             ),
             sampling_params=sampling_params,

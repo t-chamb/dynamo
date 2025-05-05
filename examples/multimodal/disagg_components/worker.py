@@ -19,8 +19,9 @@ import logging
 import os
 import signal
 
-from components.disagg_router import PyDisaggregatedRouter
-from components.prefill_worker import PrefillWorker
+from disagg_components.disagg_router import PyDisaggregatedRouter
+from disagg_components.prefill_worker import PrefillWorker
+from components.encode_worker import EncodeWorker
 from utils.nixl import NixlMetadataStore
 from utils.prefill_queue import PrefillQueue
 from utils.protocol import (
@@ -36,6 +37,8 @@ from vllm.entrypoints.openai.api_server import (
 from vllm.remote_prefill import RemotePrefillParams, RemotePrefillRequest
 from vllm.sampling_params import RequestOutputKind
 from vllm.inputs.data import TokensPrompt
+import torch
+from utils.logging import check_required_workers
 from transformers import LlavaForConditionalGeneration
 
 from dynamo.llm import KvMetricsPublisher
@@ -54,9 +57,10 @@ logger = logging.getLogger(__name__)
 )
 class VllmWorker:
     prefill_worker = depends(PrefillWorker)
-
+    # encode_worker = depends(EncodeWorker)
     def __init__(self):
         self.client = None
+        self.min_workers = 1
         self.disaggregated_router: PyDisaggregatedRouter = None  # type: ignore
         class_name = self.__class__.__name__
         self.engine_args = parse_vllm_args(class_name, "")
@@ -113,46 +117,63 @@ class VllmWorker:
             self.engine_client = await self._engine_context.__aenter__()
         else:
             raise RuntimeError("Failed to initialize engine client")
+
         if self.engine_args.router == "kv":
-            assert self.engine_client is not None, "engine_client was not initialized"
-            self.engine_client.set_metrics_publisher(self.metrics_publisher)
-            # Initially send dummy metrics to kick start,
-            # vLLM will not update stat until forward pass is triggered
-            self.metrics_publisher.publish(
-                0,  # request_active_slots
-                1024,  # request_total_slots
-                0,  # kv_active_blocks
-                1024,  # kv_total_blocks
-                0,  # num_requests_waiting
-                0.0,  # gpu_cache_usage_perc
-                0.0,  # gpu_prefix_cache_hit_rate
+            raise NotImplementedError(
+                "Multimodal requests are not supported for kv router mode"
             )
-            task = asyncio.create_task(self.create_metrics_publisher_endpoint())
-            task.add_done_callback(
-                lambda _: logger.info("metrics publisher endpoint created")
-            )
+            # assert self.engine_client is not None, "engine_client was not initialized"
+            # self.engine_client.set_metrics_publisher(self.metrics_publisher)
+            # # Initially send dummy metrics to kick start,
+            # # vLLM will not update stat until forward pass is triggered
+            # self.metrics_publisher.publish(
+            #     0,  # request_active_slots
+            #     1024,  # request_total_slots
+            #     0,  # kv_active_blocks
+            #     1024,  # kv_total_blocks
+            #     0,  # num_requests_waiting
+            #     0.0,  # gpu_cache_usage_perc
+            #     0.0,  # gpu_prefix_cache_hit_rate
+            # )
+            # task = asyncio.create_task(self.create_metrics_publisher_endpoint())
+            # task.add_done_callback(
+            #     lambda _: logger.info("metrics publisher endpoint created")
+            # )
 
         runtime = dynamo_context["runtime"]
 
-        if self.engine_args.remote_prefill:
+        if self.do_remote_prefill:
+            # if self.engine_args.remote_prefill:
             metadata = self.engine_client.nixl_metadata
             metadata_store = NixlMetadataStore("dynamo", runtime)
             await metadata_store.put(metadata.engine_id, metadata)
 
-        if self.engine_args.conditional_disagg:
-            self.disaggregated_router = PyDisaggregatedRouter(
-                runtime,
-                self.model_name,
-                max_local_prefill_length=self.engine_args.max_local_prefill_length,
-                max_prefill_queue_size=self.engine_args.max_prefill_queue_size,
-            )
-            await self.disaggregated_router.async_init()
-        else:
-            self.disaggregated_router = None
+            if self.engine_args.conditional_disagg:
+                self.disaggregated_router = PyDisaggregatedRouter(
+                    runtime,
+                    self.model_name,
+                    max_local_prefill_length=self.engine_args.max_local_prefill_length,
+                    max_prefill_queue_size=self.engine_args.max_prefill_queue_size,
+                )
+                await self.disaggregated_router.async_init()
+            else:
+                self.disaggregated_router = None
 
-        model = LlavaForConditionalGeneration.from_pretrained(self.engine_args.model)
-        vision_tower = model.vision_tower
-        self.embedding_size = vision_tower.vision_model.embeddings.position_embedding.num_embeddings
+            model = LlavaForConditionalGeneration.from_pretrained(self.engine_args.model)
+            vision_tower = model.vision_tower
+            self.embedding_size = vision_tower.vision_model.embeddings.position_embedding.num_embeddings
+        else:
+            enc_comp_ns, enc_comp_name = EncodeWorker.dynamo_address()  # type: ignore
+            self.encode_worker_client = (
+                await runtime.namespace(enc_comp_ns)
+                .component(enc_comp_name)
+                .endpoint("encode")
+                .client()
+            )
+
+            await check_required_workers(self.encode_worker_client, self.min_workers)
+            self.disaggregated_router = None
+        logger.info("VllmWorker has been initialized")
 
     def shutdown_vllm_engine(self, signum, frame):
         """Shutdown the background loop"""
@@ -166,9 +187,9 @@ class VllmWorker:
         finally:
             loop.stop()
 
-    async def create_metrics_publisher_endpoint(self):
-        component = dynamo_context["component"]
-        await self.metrics_publisher.create_endpoint(component)
+    # async def create_metrics_publisher_endpoint(self):
+    #     component = dynamo_context["component"]
+    #     await self.metrics_publisher.create_endpoint(component)
 
     def get_remote_prefill_request_callback(self):
         # TODO: integrate prefill_queue to dynamo endpoint
@@ -183,54 +204,81 @@ class VllmWorker:
 
     @dynamo_endpoint()
     async def generate(self, request: vLLMMultimodalRequest):
-        # TODO: consider prefix hit when deciding prefill locally or remotely
+        image_features = None
+        if self.do_remote_prefill:
+            if self.disaggregated_router is not None:
+                async with PrefillQueue.get_instance(
+                    nats_server=self._prefill_queue_nats_server,
+                    stream_name=self._prefill_queue_stream_name,
+                ) as prefill_queue:
+                    prefill_queue_size = await prefill_queue.get_queue_size()
+                disagg_router_decision = await self.disaggregated_router.prefill_remote(
+                    len(request.engine_prompt["prompt_token_ids"]),
+                    request.prefix_hit_rate,
+                    prefill_queue_size,
+                )
+            else:
+                # always prefill remotely if no disaggregated router is provided
+                disagg_router_decision = True
 
-        if self.disaggregated_router is not None:
-            async with PrefillQueue.get_instance(
-                nats_server=self._prefill_queue_nats_server,
-                stream_name=self._prefill_queue_stream_name,
-            ) as prefill_queue:
-                prefill_queue_size = await prefill_queue.get_queue_size()
-            disagg_router_decision = await self.disaggregated_router.prefill_remote(
-                len(request.engine_prompt["prompt_token_ids"]),
-                request.prefix_hit_rate,
-                prefill_queue_size,
-            )
-        else:
-            # always prefill remotely if no disaggregated router is provided
-            disagg_router_decision = True
+            if self.do_remote_prefill and disagg_router_decision:
+                remote_prefill_params = RemotePrefillParams(
+                    is_remote_prefill=True,
+                    remote_prefill_request_callback=self.get_remote_prefill_request_callback(),
+                    # Pass the image url as part of the RemotePrefillParams, which will be passed to the prefill worker via RemotePrefillRequest
+                    multimodal_data_source={
+                        "image_url": request.image_url,
+                    },
+                )
+                logger.info(
+                    f"Prefilling remotely for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
+                )
+            else:
+                remote_prefill_params = None
+                logger.info(
+                    f"Prefilling locally for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
+                )
 
-        if self.do_remote_prefill and disagg_router_decision:
-            remote_prefill_params = RemotePrefillParams(
-                is_remote_prefill=True,
-                remote_prefill_request_callback=self.get_remote_prefill_request_callback(),
-                # Pass the image url as part of the RemotePrefillParams, which will be passed to the prefill worker via RemotePrefillRequest
-                multimodal_data_source={
-                    "image_url": request.image_url,
-                },
-            )
-            logger.info(
-                f"Prefilling remotely for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
-            )
+            # The decode worker will pre-allocate the memory based on the prompt token length for the prefill worker to transfer the kv cache.
+            # As a workaround, here we manually insert some placeholder dummy tokens based on the embedding size
+            # so that decode worker can pre-allocate the memory with the correct size.
+            # The structure of the prompt will be like: "\nUSER: <image> <placeholder_tokens>\nDescribe the image.\nASSISTANT:".
+            # Since the "<image>" token is included in the prompt, the length of the prompt token ids is 7, and the number of
+            # dummy tokens is embedding_size - 1.
+            DUMMY_TOKEN_INDEX = 0
+            prompt_ids = request.engine_prompt["prompt_token_ids"][:7] + [DUMMY_TOKEN_INDEX] * (self.embedding_size - 1) + request.engine_prompt["prompt_token_ids"][7:]
+        
         else:
+            encode_generator = await self.encode_worker_client.round_robin(
+                EncodeRequest(
+                    image_url=request.image_url,
+                ).model_dump_json()
+            )
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            async for encode_response in encode_generator:
+                encode_output = EncodeResponse.model_validate_json(encode_response.data())
+                image_features = torch.tensor(
+                    encode_output.image_features, device=device, dtype=torch.float16
+                )
+            
             remote_prefill_params = None
             logger.info(
                 f"Prefilling locally for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
             )
+            prompt_ids = request.engine_prompt["prompt_token_ids"]
 
         # rust HTTP requires Delta streaming
         request.sampling_params.output_kind = RequestOutputKind.DELTA
 
-        # The decode worker will pre-allocate the memory based on the prompt token length for the prefill worker to transfer the kv cache.
-        # As a workaround, here we manually insert some placeholder dummy tokens based on the embedding size
-        # so that decode worker can pre-allocate the memory with the correct size.
-        # The structure of the prompt will be like: "\nUSER: <placeholder_tokens>\nDescribe the image.\nASSISTANT:".
-        DUMMY_TOKEN_INDEX = 0
-        prompt_ids = request.engine_prompt["prompt_token_ids"][:6] + [DUMMY_TOKEN_INDEX] * self.embedding_size + request.engine_prompt["prompt_token_ids"][6:]
+        if image_features is not None:
+            multi_modal_data = {"image": image_features}
+        else:
+            multi_modal_data = None
 
         async for response in self.engine_client.generate(
             prompt=TokensPrompt(
                 prompt_token_ids=prompt_ids,
+                multi_modal_data=multi_modal_data,
             ),
             sampling_params=request.sampling_params,
             request_id=request.request_id,

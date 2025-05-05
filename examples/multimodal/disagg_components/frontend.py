@@ -15,8 +15,8 @@
 
 import logging
 
-from components.processor import Processor
-from components.worker import VllmWorker
+from disagg_components.processor import Processor
+from disagg_components.worker import VllmWorker
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from utils.protocol import MultiModalRequest
@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
     app=FastAPI(title="Multimodal Example"),
 )
 class Frontend:
-    worker = depends(VllmWorker)
     processor = depends(Processor)
 
     @dynamo_endpoint(is_api=True)

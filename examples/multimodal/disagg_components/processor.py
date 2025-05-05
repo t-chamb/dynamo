@@ -19,8 +19,7 @@ import uuid
 from enum import Enum
 from typing import AsyncIterator, Tuple, Union
 
-from components.kv_router import Router
-from components.worker import VllmWorker
+from disagg_components.worker import VllmWorker
 from transformers import AutoTokenizer
 from utils.chat_processor import ChatProcessor, CompletionsProcessor, ProcessMixIn
 from utils.logging import check_required_workers
@@ -56,7 +55,6 @@ class Processor(ProcessMixIn):
     """
 
     worker = depends(VllmWorker)
-    router = depends(Router)
 
     def __init__(self):
         class_name = self.__class__.__name__
@@ -120,34 +118,34 @@ class Processor(ProcessMixIn):
         ) = await self._parse_raw_request(raw_request)
 
         router_mode = (await self.etcd_kv_cache.get("router")).decode()
+        worker_request = vLLMMultimodalRequest(
+            engine_prompt=engine_prompt,
+            sampling_params=sampling_params,
+            request_id=request_id,
+            image_url=image,
+        )
+        router_mode = (await self.etcd_kv_cache.get("router")).decode()
         if router_mode == "kv":
-            logger.info(
-                "Multimodal requests are not supported for kv router mode, falling back to round-robin",
+            # The current KV router does not support multimodal requests because
+            # it performs cache lookup based solely on prompt tokens. At this stage,
+            # multimodal data (e.g., image features) is not yet available, so the router
+            # cannot select the optimal worker using both prompt and image inputs.
+            raise NotImplementedError(
+                "Multimodal requests are not supported for kv router mode"
             )
-            router_mode = "round-robin"
 
         if router_mode == "random":
-            engine_generator = await self.worker_client.generate(
-                vLLMMultimodalRequest(
-                    engine_prompt=engine_prompt,
-                    sampling_params=sampling_params,
-                    request_id=request_id,
-                    image_url=image,
-                ).model_dump_json()
+            response_generator = await self.worker_client.generate(
+                worker_request.model_dump_json()
             )
         elif router_mode == "round-robin":
-            engine_generator = await self.worker_client.round_robin(
-                vLLMMultimodalRequest(
-                    engine_prompt=engine_prompt,
-                    sampling_params=sampling_params,
-                    request_id=request_id,
-                    image_url=image,
-                ).model_dump_json()
+            response_generator = await self.worker_client.round_robin(
+                worker_request.model_dump_json()
             )
         else:
             raise NotImplementedError(f"Router mode {router_mode} not implemented")
 
-        output = self._generate_responses(engine_generator, request_type)
+        output = self._generate_responses(response_generator, request_type)
 
         # TODO: This is a temporary solution to combine the content from the engine generator.
         # After having the multimodal support in OpenAI compatible frontend, we can use that
@@ -167,10 +165,10 @@ class Processor(ProcessMixIn):
 
     # This method is used to process the responses from the engine generator.
     async def _generate_responses(
-        self, engine_generator: AsyncIterator[RequestOutput], request_type: RequestType
+        self, response_generator: AsyncIterator[RequestOutput], request_type: RequestType
     ) -> AsyncIterator[Union[RequestOutput, Tuple[int, RequestOutput]]]:
         prompt_idx = 0
-        async for resp in engine_generator:
+        async for resp in response_generator:
             # Deserialize the response from the engine
             # Creates correct vLLM objects for each field
             output = MyRequestOutput.model_validate_json(resp.data())
@@ -203,7 +201,7 @@ class Processor(ProcessMixIn):
         # TODO: After having the multimodal support in OpenAI compatible frontend, we can use that directly and remove the custom endpoint.
         msg = {
             "role": "user",
-            "content": "USER: \nQuestion:" + request.prompt + " Answer:",
+            "content": "USER: <image>\nQuestion:" + request.prompt + " Answer:",
         }
 
         chat_request = ChatCompletionRequest(
