@@ -14,7 +14,7 @@
 # limitations under the License.
 
 import logging
-import time
+import asyncio
 from typing import AsyncGenerator
 import random
 
@@ -106,9 +106,8 @@ class SlowRouter(RouterInterface):
     @dynamo_endpoint()
     async def route(self, request: RouteRequest):
         print("Routing slow")
-        # Simulate slow routing with a 1-second delay
-        time.sleep(1)
         async for response in self.worker.generate(request.model_dump_json()):
+            await asyncio.sleep(1)  # Simulate slow routing with a 1-second delay
             yield response
 
 
@@ -119,9 +118,8 @@ class FastRouter(RouterInterface):
     @dynamo_endpoint()
     async def route(self, request: RouteRequest):
         print("Routing fast")
-        # Simulate fast routing with a 0.1-second delay
-        time.sleep(0.1)
         async for response in self.worker.generate(request.model_dump_json()):
+            await asyncio.sleep(0.1)  # Simulate fast routing with a 0.1-second delay
             yield response
 
 

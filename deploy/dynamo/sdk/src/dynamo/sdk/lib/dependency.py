@@ -29,7 +29,7 @@ from dynamo.sdk.lib.decorators import DynamoServiceInterface
 T = TypeVar("T")
 
 
-class DynamoClient: 
+class DynamoClient:
     """Client for calling Dynamo endpoints with streaming support"""
 
     def __init__(self, service: DynamoService[Any]):
