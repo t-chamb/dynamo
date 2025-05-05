@@ -80,20 +80,44 @@ def _is_dynamo(func: t.Callable | None) -> bool:
     """True if the function is a DynamoEndpoint instance."""
     return isinstance(func, DynamoEndpoint)
 
-def _validate_dynamo_interface(cls: type) -> None:
+def _get_abstract_dynamo_endpoints(cls: type) -> t.Set[str]:
+    """Get all abstract endpoint names from the class's MRO.
+    
+    Args:
+        cls: The class to check for abstract endpoints
+        
+    Returns:
+        Set of abstract endpoint names
     """
-    Validate that *cls* fully implements every @abstract_dynamo_endpoint
-    declared in its ancestors and that each implementation is
-    decorated with @dynamo_endpoint.
-    """
-    # Collect abstract endpoint names from the full MRO
-    required: t.Set[str] = {
+    return {
         name
         for base in cls.mro()
         for name, val in base.__dict__.items()
         if getattr(val, "__is_abstract_dynamo__", False)
     }
 
+def _check_dynamo_endpoint_implemented(cls: type, name: str) -> bool:
+    """Check if an endpoint is properly implemented.
+    
+    Args:
+        cls: The class to check
+        name: The name of the endpoint to check
+        
+    Returns:
+        True if the endpoint is properly implemented, False otherwise
+    """
+    impl = getattr(cls, name, None)
+    return impl is not None and _is_dynamo(impl)
+
+def _validate_dynamo_interfaces(cls: type) -> None:
+    """
+    Validate that *cls* fully implements every @abstract_dynamo_endpoint
+    declared in its ancestors and that each implementation is
+    decorated with @dynamo_endpoint.
+    """
+    # TODO: Handle edge cases where there are conflicts in names between the interfaces
+    required = _get_abstract_dynamo_endpoints(cls)
+    
     missing, undecorated, not_callable = [], [], []
 
     for name in required:
@@ -394,6 +418,27 @@ class DynamoService(Service[T]):
 
         return result
 
+    def is_servable(self) -> bool:
+        """Check if this service is ready to be served.
+        
+        A service is servable if:
+        1. It is not a subclass of DynamoServiceInterface (concrete service)
+        2. If it is a subclass of DynamoServiceInterface, all abstract methods are implemented
+           with @dynamo_endpoint decorators
+           
+        Returns:
+            bool: True if the service is ready to be served, False otherwise
+        """
+        from dynamo.sdk.lib.decorators import DynamoServiceInterface
+        
+        # If not a DynamoServiceInterface, it's servable
+        if not issubclass(self.inner, DynamoServiceInterface):
+            return True
+            
+        # Get all abstract endpoints and check their implementations
+        abstract_endpoints = _get_abstract_dynamo_endpoints(self.inner)
+        return all(_check_dynamo_endpoint_implemented(self.inner, name) for name in abstract_endpoints)
+
 
 def service(
     inner: Optional[type[T]] = None,
@@ -428,8 +473,9 @@ def service(
         if isinstance(inner, Service):
             raise TypeError("service() decorator can only be applied once")
         
-        # Validate interface implementation before creating the service
-        _validate_dynamo_interface(inner)
+        # Validate that if the inner class is a subclass of 1 or more DynamoServiceInterfaces,
+        # it implements all the abstract methods declared in the interfaces
+        _validate_dynamo_interfaces(inner)
         
         return DynamoService(
             config=config,

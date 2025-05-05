@@ -16,6 +16,7 @@
 import logging
 import time
 from typing import AsyncGenerator
+import random
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -64,7 +65,7 @@ Users/Clients (HTTP)
 
 class WorkerInterface(DynamoServiceInterface):
     """Interface for LLM workers."""
-    @abstract_dynamo_endpoint
+    @abstract_dynamo_endpoint # enforces that the service implements the method, but also decorates as a dynamo endpoint
     async def generate(self, request: GenerateRequest):
         pass
 
@@ -80,16 +81,22 @@ class RouterInterface(DynamoServiceInterface):
 class VllmWorker(WorkerInterface):
     @dynamo_endpoint()
     async def generate(self, request: GenerateRequest):
+        # Convert to Spongebob case (randomly capitalize letters)
         for token in request.text.split():
-            yield GenerateResponse(text=f"VLLM: {token}")
+            spongebob_token = ''.join(
+                c.upper() if random.random() < 0.5 else c.lower()
+                for c in token
+            )
+            yield spongebob_token
 
 
 @service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
 class TRTLLMWorker(WorkerInterface):
     @dynamo_endpoint()
     async def generate(self, request: GenerateRequest):
+        # Convert to SHOUTING case
         for token in request.text.split():
-            yield GenerateResponse(text=f"TRT-LLM: {token}")
+            yield token.upper()
 
 
 @service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
@@ -99,7 +106,8 @@ class SlowRouter(RouterInterface):
     @dynamo_endpoint()
     async def route(self, request: RouteRequest):
         print("Routing slow")
-        yield RouteResponse(text="slow")
+        # Simulate slow routing with a 1-second delay
+        time.sleep(1)
         async for response in self.worker.generate(request.model_dump_json()):
             yield response
 
@@ -111,7 +119,8 @@ class FastRouter(RouterInterface):
     @dynamo_endpoint()
     async def route(self, request: RouteRequest):
         print("Routing fast")
-        yield RouteResponse(text="fast")
+        # Simulate fast routing with a 0.1-second delay
+        time.sleep(0.1)
         async for response in self.worker.generate(request.model_dump_json()):
             yield response
 
@@ -131,10 +140,12 @@ class Frontend:
             yield ChatResponse(text=response.text)
 
 
-# Mix and match pipelines
+# Mix and match pipelines (Tests)
 fast_pipeline = Frontend.link(FastRouter).link(TRTLLMWorker)
 # slow_pipeline = Frontend.link(SlowRouter).link(VllmWorker)
 # mixed_pipeline = Frontend.link(FastRouter).link(VllmWorker)
+
+# Try to pass a 
 
 """
 Example usage:
