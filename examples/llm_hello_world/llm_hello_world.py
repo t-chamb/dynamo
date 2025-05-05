@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from dynamo.runtime.logging import configure_dynamo_logging
 from dynamo.sdk import (
     DYNAMO_IMAGE,
-    DynamoServiceInterface,
+    AbstractDynamoService,
     abstract_dynamo_endpoint,
     depends,
     dynamo_endpoint,
@@ -63,14 +63,14 @@ Users/Clients (HTTP)
 """
 
 
-class WorkerInterface(DynamoServiceInterface):
+class WorkerInterface(AbstractDynamoService):
     """Interface for LLM workers."""
-    @abstract_dynamo_endpoint # enforces that the service implements the method, but also decorates as a dynamo endpoint
+    @abstract_dynamo_endpoint # enforces that the service implements the method, but also that it is properly decorated
     async def generate(self, request: GenerateRequest):
         pass
 
 
-class RouterInterface(DynamoServiceInterface):
+class RouterInterface(AbstractDynamoService):
     """Interface for request routers."""
     @abstract_dynamo_endpoint
     async def route(self, request: RouteRequest):

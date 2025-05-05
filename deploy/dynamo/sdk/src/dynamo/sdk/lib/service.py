@@ -27,7 +27,7 @@ from _bentoml_sdk.images import Image
 from _bentoml_sdk.service.config import validate
 from fastapi import FastAPI
 
-from dynamo.sdk.lib.decorators import DynamoEndpoint, DynamoServiceInterface
+from dynamo.sdk.lib.decorators import DynamoEndpoint, AbstractDynamoService
 T = TypeVar("T", bound=object)
 
 logger = logging.getLogger(__name__)
@@ -293,10 +293,10 @@ class DynamoService(Service[T]):
         """
         # Get all dependencies that may be on interfaces
         interface_deps = [dep.on.inner for dep in self.dependencies.values() 
-                         if issubclass(dep.on.inner, DynamoServiceInterface)]
+                         if issubclass(dep.on.inner, AbstractDynamoService)]
         
         if not interface_deps:
-            raise ValueError(f"No DynamoServiceInterfaces found to override in {self.name}")
+            raise ValueError(f"No AbstractDynamoServices found to override in {self.name}")
         
         curr_inner = next_service.inner
             
@@ -422,17 +422,17 @@ class DynamoService(Service[T]):
         """Check if this service is ready to be served.
         
         A service is servable if:
-        1. It is not a subclass of DynamoServiceInterface (concrete service)
-        2. If it is a subclass of DynamoServiceInterface, all abstract methods are implemented
+        1. It is not a subclass of AbstractDynamoService (concrete service)
+        2. If it is a subclass of AbstractDynamoService, all abstract methods are implemented
            with @dynamo_endpoint decorators
            
         Returns:
             bool: True if the service is ready to be served, False otherwise
         """
-        from dynamo.sdk.lib.decorators import DynamoServiceInterface
+        from dynamo.sdk.lib.decorators import AbstractDynamoService
         
-        # If not a DynamoServiceInterface, it's servable
-        if not issubclass(self.inner, DynamoServiceInterface):
+        # If not a AbstractDynamoService, it's servable
+        if not issubclass(self.inner, AbstractDynamoService):
             return True
             
         # Get all abstract endpoints and check their implementations
@@ -473,7 +473,7 @@ def service(
         if isinstance(inner, Service):
             raise TypeError("service() decorator can only be applied once")
         
-        # Validate that if the inner class is a subclass of 1 or more DynamoServiceInterfaces,
+        # Validate that if the inner class is a subclass of 1 or more AbstractDynamoServices,
         # it implements all the abstract methods declared in the interfaces
         _validate_dynamo_interfaces(inner)
         

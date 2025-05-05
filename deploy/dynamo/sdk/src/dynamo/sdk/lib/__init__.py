@@ -14,14 +14,14 @@
 #  limitations under the License.
 
 from .decorators import (
-    DynamoServiceInterface,
+    AbstractDynamoService,
     abstract_dynamo_endpoint,
     dynamo_endpoint,
 )
 from .service import service
 
 __all__ = [
-    "DynamoServiceInterface",
+    "AbstractDynamoService",
     "abstract_dynamo_endpoint",
     "dynamo_endpoint",
     "service",

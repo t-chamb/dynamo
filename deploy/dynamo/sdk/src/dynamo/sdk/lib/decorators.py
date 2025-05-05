@@ -91,7 +91,7 @@ def async_on_start(func: t.Callable) -> t.Callable:
     return func
 
 
-class DynamoServiceInterface(abc.ABC):
+class AbstractDynamoService(abc.ABC):
     """Base class for Dynamo service interfaces."""
     pass
 

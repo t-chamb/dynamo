@@ -1,13 +1,13 @@
 import pytest
 from dynamo.sdk.lib.decorators import (
-    DynamoServiceInterface,
+    AbstractDynamoService,
     abstract_dynamo_endpoint,
     dynamo_endpoint,
 )
 from dynamo.sdk.lib.service import service
 
 
-class TestInterface(DynamoServiceInterface):
+class TestInterface(AbstractDynamoService):
     @abstract_dynamo_endpoint
     def foo(self, x: int) -> int:
         pass
@@ -17,7 +17,7 @@ class TestInterface(DynamoServiceInterface):
         pass
 
 
-class ExtraInterface(DynamoServiceInterface):
+class ExtraInterface(AbstractDynamoService):
     @abstract_dynamo_endpoint
     def baz(self, z: int) -> int:
         pass
