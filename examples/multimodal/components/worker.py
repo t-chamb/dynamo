@@ -57,7 +57,7 @@ class VllmWorker:
     # For disaggregated serving, we need to link the prefill worker to the vllm worker
     prefill_worker = depends(PrefillWorker)
     # For aggregated serving, we need to link the encode worker to the vllm worker.
-    # encode_worker = depends(EncodeWorker)
+    encode_worker = depends(EncodeWorker)
 
     def __init__(self):
         self.client = None
