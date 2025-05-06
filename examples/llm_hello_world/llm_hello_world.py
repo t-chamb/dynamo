@@ -18,6 +18,8 @@ import logging
 import random
 
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from llm_types import ChatRequest
 
 from dynamo.sdk import (
     DYNAMO_IMAGE,
@@ -27,8 +29,6 @@ from dynamo.sdk import (
     dynamo_endpoint,
     service,
 )
-
-from .types import ChatRequest, ChatResponse, GenerateRequest, RouteRequest
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class WorkerInterface(AbstractDynamoService):
     """Interface for LLM workers."""
 
     @abstract_dynamo_endpoint  # enforces that the service implements the method, but also that it is properly decorated
-    async def generate(self, request: GenerateRequest):
+    async def generate(self, request: ChatRequest):
         pass
 
 
@@ -66,14 +66,14 @@ class RouterInterface(AbstractDynamoService):
     """Interface for request routers."""
 
     @abstract_dynamo_endpoint
-    async def route(self, request: RouteRequest):
+    async def generate(self, request: ChatRequest):
         pass
 
 
-@service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
+@service(dynamo={"enabled": True, "namespace": "llm-hello-world"}, image=DYNAMO_IMAGE)
 class VllmWorker(WorkerInterface):
     @dynamo_endpoint()
-    async def generate(self, request: GenerateRequest):
+    async def generate(self, request: ChatRequest):
         # Convert to Spongebob case (randomly capitalize letters)
         for token in request.text.split():
             spongebob_token = "".join(
@@ -82,33 +82,33 @@ class VllmWorker(WorkerInterface):
             yield spongebob_token
 
 
-@service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
+@service(dynamo={"enabled": True, "namespace": "llm-hello-world"}, image=DYNAMO_IMAGE)
 class TRTLLMWorker(WorkerInterface):
     @dynamo_endpoint()
-    async def generate(self, request: GenerateRequest):
+    async def generate(self, request: ChatRequest):
         # Convert to SHOUTING case
         for token in request.text.split():
             yield token.upper()
 
 
-@service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
+@service(dynamo={"enabled": True, "namespace": "llm-hello-world"}, image=DYNAMO_IMAGE)
 class SlowRouter(RouterInterface):
     worker = depends(WorkerInterface)  # Will be overridden by link()
 
     @dynamo_endpoint()
-    async def route(self, request: RouteRequest):
+    async def generate(self, request: ChatRequest):
         print("Routing slow")
         async for response in self.worker.generate(request.model_dump_json()):
             await asyncio.sleep(1)  # Simulate slow routing with a 1-second delay
             yield response
 
 
-@service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
+@service(dynamo={"enabled": True, "namespace": "llm-hello-world"}, image=DYNAMO_IMAGE)
 class FastRouter(RouterInterface):
     worker = depends(WorkerInterface)  # Will be overridden by link()
 
     @dynamo_endpoint()
-    async def route(self, request: RouteRequest):
+    async def generate(self, request: ChatRequest):
         print("Routing fast")
         async for response in self.worker.generate(request.model_dump_json()):
             await asyncio.sleep(0.1)  # Simulate fast routing with a 0.1-second delay
@@ -118,20 +118,31 @@ class FastRouter(RouterInterface):
 app = FastAPI()
 
 
-@service(dynamo={"enabled": True}, image=DYNAMO_IMAGE, app=app)
+@service(dynamo={"enabled": True, "namespace": "llm-hello-world"}, image=DYNAMO_IMAGE, app=app)
 class Frontend:
     router = depends(RouterInterface)  # Will be overridden by link()
 
     @dynamo_endpoint(is_api=True)
-    async def chat_completions(self, request: ChatRequest):
-        text = " ".join(msg["content"] for msg in request.messages)
-        route_request = RouteRequest(model=request.model, text=text)
-        async for response in self.router.route(route_request.model_dump_json()):
-            yield ChatResponse(text=response.text)
+    async def generate(self, request: ChatRequest):
+        print(f"Received request: {request}")
+        async def content_generator():
+            async for response in self.router.generate(request.model_dump_json()):
+                print(f"Received response: {response}")
+                # Format as SSE
+                yield f"data: {response}\n\n"
 
+        return StreamingResponse(
+            content_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
 
 # Mix and match pipelines (Tests)
-fast_pipeline = Frontend.link(FastRouter).link(TRTLLMWorker)
+Frontend.link(SlowRouter).link(TRTLLMWorker)
 # slow_pipeline = Frontend.link(SlowRouter).link(VllmWorker)
 # mixed_pipeline = Frontend.link(FastRouter).link(VllmWorker)
 

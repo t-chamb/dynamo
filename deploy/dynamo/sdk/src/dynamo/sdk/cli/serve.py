@@ -138,8 +138,8 @@ def serve(
 
     svc = find_and_load_service(dynamo_pipeline, working_dir=working_dir)
     logger.info(f"Loaded service: {svc.name}")
-    logger.info("Dependencies: %s", [dep.on.name for dep in svc.dependencies.values()])
     LinkedServices.remove_unused_edges()
+    logger.info("Dependencies: %s", [dep.on.name for dep in svc.dependencies.values()])
 
     from dynamo.sdk.cli.serving import serve_dynamo_graph  # type: ignore
 

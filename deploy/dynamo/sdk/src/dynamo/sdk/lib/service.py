@@ -45,8 +45,7 @@ class RuntimeLinkedServices:
     def add(self, edge: Tuple[DynamoService, DynamoService]):
         src, dest = edge
         self.edges[src].add(dest.inner)
-        # track the dest node as well so we can cleanup later
-        self.edges[dest]
+        # drawing an edge from src to dest.inner
 
     def remove_unused_edges(self):
         # this method is idempotent
@@ -55,6 +54,8 @@ class RuntimeLinkedServices:
         # remove edges that are not in the current service
         for u, vertices in self.edges.items():
             u.remove_unused_edges(used_edges=vertices)
+
+    # the way 
 
 
 LinkedServices = RuntimeLinkedServices()
@@ -297,40 +298,61 @@ class DynamoService(Service[T]):
         Raises:
             ValueError: If no matching interface is found or if multiple matches are found
         """
-        # Get all dependencies that may be on interfaces
+        print(f"\n[DEBUG] Starting link process:")
+        print(f"[DEBUG] Current service: {self.name} ({self.inner.__name__})")
+        print(f"[DEBUG] Next service: {next_service.name} ({next_service.inner.__name__})")
+
+        # Get all dependencies that may be on interfaces, storing both interface and dep_key
         interface_deps = [
-            dep.on.inner
-            for dep in self.dependencies.values()
+            (dep.on.inner, dep_key, dep)
+            for dep_key, dep in self.dependencies.items()
             if issubclass(dep.on.inner, AbstractDynamoService)
         ]
 
+        print(f"[DEBUG] Found {len(interface_deps)} interface dependencies:")
+        for interface, dep_key, _ in interface_deps:
+            print(f"  - {interface.__name__} (key: {dep_key})")
+
         if not interface_deps:
+            print(f"[DEBUG] ERROR: No AbstractDynamoServices found to override")
             raise ValueError(
                 f"No AbstractDynamoServices found to override in {self.name}"
             )
 
         curr_inner = next_service.inner
+        print(f"[DEBUG] Checking if {curr_inner.__name__} implements any required interfaces")
 
         # Find interfaces that next_service implements
         matching_interfaces = []
-        for dep in interface_deps:
-            if issubclass(curr_inner, dep):
-                matching_interfaces.append(dep)
+        for interface, dep_key, original_dep in interface_deps:
+            if issubclass(curr_inner, interface):
+                print(f"[DEBUG] Found match: {curr_inner.__name__} implements {interface.__name__}")
+                matching_interfaces.append((interface, dep_key, original_dep))
 
         if not matching_interfaces:
+            print(f"[DEBUG] ERROR: No matching interfaces found")
             raise ValueError(
                 f"{curr_inner.__name__} does not implement any interfaces required by {self.name}"
             )
 
         if len(matching_interfaces) > 1:
-            interface_names = [dep.__name__ for dep in matching_interfaces]
+            interface_names = [interface.__name__ for interface, _, _ in matching_interfaces]
+            print(f"[DEBUG] ERROR: Multiple matching interfaces found: {interface_names}")
             raise ValueError(
                 f"{curr_inner.__name__} implements multiple interfaces required by {self.name}: {interface_names}"
             )
 
+        # Get the matching interface, dep_key, and original dependency
+        _, matching_dep_key, matching_dep = matching_interfaces[0]
+
+        print(f"[DEBUG] Replacing dependency {matching_dep_key} with {next_service.name}")
+        # Let's hot swap the on of the existing dependency with the new service
+        matching_dep.on = next_service
+
         # Track the linked service
         self._linked_services.append(next_service)
         LinkedServices.add((self, next_service))
+        print(f"[DEBUG] Successfully linked {self.name} to {next_service.name}")
 
         return next_service
 
