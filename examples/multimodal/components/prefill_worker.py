@@ -201,14 +201,18 @@ class PrefillWorker:
             self._loaded_metadata.add(request.engine_id)
 
         # To make sure the decode worker can pre-allocate the memory with the correct size for the prefill worker to transfer the kv cache,
-        # we manually insert some placeholder dummy tokens based on the embedding size.
-        # Here we need to remove those dummy tokens.
-        # The structure of the prompt will be like: "\nUSER: <image>\nDescribe the image.\nASSISTANT:".
+        # some placeholder dummy tokens were inserted based on the embedding size in the worker.py.
+        # The structure of the prompt is "\nUSER: <image> <dummy_tokens>\n<user_prompt>\nASSISTANT:", need to remove the dummy tokens after the image token.
+        IMAGE_TOKEN_ID = 32000
         embedding_size = image_features.shape[1]
         padding_size = embedding_size - 1
+        image_token_index = request.prompt_token_ids.index(IMAGE_TOKEN_ID)
+        dummy_token_index = image_token_index + 1
         prompt_token_ids = (
-            request.prompt_token_ids[:7] + request.prompt_token_ids[7 + padding_size :]
+            request.prompt_token_ids[:dummy_token_index]
+            + request.prompt_token_ids[dummy_token_index + padding_size :]
         )
+
         async for _ in self.engine_client.generate(
             request_id=request.request_id,
             prompt=TokensPrompt(
