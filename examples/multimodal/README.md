@@ -20,9 +20,9 @@ limitations under the License.
 This directory provides example workflows and reference implementations for deploying a multimodal model using Dynamo.
 The examples are based on the [llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf) model.
 
-#### Multimodal Aggregated Serving
+## Multimodal Aggregated Serving
 
-## Components
+### Components
 
 - workers: For aggregated serving, we have two workers, [encode_worker](components/encode_worker.py) for encoding and [vllm_worker](components/worker.py) for prefilling and decoding.
 - processor: Tokenizes the prompt and passes it to the vllm worker.
@@ -72,9 +72,9 @@ You should see a response similar to this:
 " The image features a close-up view of the front of a bus, with a prominent neon sign clearly displayed. The bus appears to be slightly past its prime condition, beyond its out-of-service section. Inside the bus, we see a depth of text, with the sign saying \"out of service\". A wide array of windows line the side of the double-decker bus, making its overall appearance quite interesting and vintage."
 ```
 
-#### Multimodal Disaggregated serving
+## Multimodal Disaggregated serving
 
-## Components
+### Components
 
 - workers: For disaggregated serving, we have three workers, [encode_worker](components/encode_worker.py) for encoding, [vllm_worker](components/worker.py) for decoding, and [prefill_worker](components/prefill_worker.py) for prefilling.
 - processor: Tokenizes the prompt and passes it to the vllm worker.
