@@ -18,11 +18,6 @@ Common:
   max-model-len: 4096
   kv-transfer-config: '{"kv_connector":"DynamoNixlConnector"}'
 
-Frontend:
-  served_model_name: llava-hf/llava-1.5-7b-hf
-  endpoint: dynamo.Processor.chat/completions
-  port: 8000
-
 Processor:
   router: round-robin
   common-configs: [model, block-size]

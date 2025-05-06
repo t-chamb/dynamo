@@ -94,18 +94,9 @@ class VllmWorker:
                 self.engine_args.pipeline_parallel_size = 1
 
         if self.engine_args.router == "kv":
-            if not self.engine_args.enable_prefix_caching:
-                logger.info(
-                    "When using KV router, prefix caching must be enabled, setting to True"
-                )
-                self.engine_args.enable_prefix_caching = True
-
-            VLLM_WORKER_ID = dynamo_context["endpoints"][0].lease_id()
-            os.environ["VLLM_WORKER_ID"] = str(VLLM_WORKER_ID)
-            os.environ["VLLM_KV_NAMESPACE"] = "dynamo"
-            os.environ["VLLM_KV_COMPONENT"] = class_name
-            logger.info(f"Generate endpoint ID: {VLLM_WORKER_ID}")
-        self.metrics_publisher = KvMetricsPublisher()
+            raise NotImplementedError(
+                "Multimodal requests are not supported for kv router mode"
+            )
 
         signal.signal(signal.SIGTERM, self.shutdown_vllm_engine)
         signal.signal(signal.SIGINT, self.shutdown_vllm_engine)
@@ -128,7 +119,6 @@ class VllmWorker:
         runtime = dynamo_context["runtime"]
 
         if self.do_remote_prefill:
-            # if self.engine_args.remote_prefill:
             metadata = self.engine_client.nixl_metadata
             metadata_store = NixlMetadataStore("dynamo", runtime)
             await metadata_store.put(metadata.engine_id, metadata)
@@ -238,6 +228,7 @@ class VllmWorker:
             )
 
         else:
+            # For aggregated serving, the vllm worker will directly send the encode request to the encode worker.
             encode_generator = await self.encode_worker_client.round_robin(
                 EncodeRequest(
                     image_url=request.image_url,
