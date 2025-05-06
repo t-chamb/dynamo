@@ -99,13 +99,19 @@ def nats_server():
         yield proc
 
 
-@pytest.fixture(
-    params=["multimodal_agg", "multimodal_disagg"]
-)
+@pytest.fixture(params=["multimodal_agg", "multimodal_disagg"])
 def deployment_config(request):
     config_map = {
-        "multimodal_agg": ("graphs.agg:Frontend", "configs/agg.yaml", "/workspace/examples/multimodal"),
-        "multimodal_disagg": ("graphs.disagg:Frontend", "configs/disagg.yaml", "/workspace/examples/multimodal"),
+        "multimodal_agg": (
+            "graphs.agg:Frontend",
+            "configs/agg.yaml",
+            "/workspace/examples/multimodal",
+        ),
+        "multimodal_disagg": (
+            "graphs.disagg:Frontend",
+            "configs/disagg.yaml",
+            "/workspace/examples/multimodal",
+        ),
     }
     return config_map[request.param]
 
@@ -131,14 +137,13 @@ def test_deployment(etcd_server, nats_server, deployment_config):
     graph_module, config_path, cwd = deployment_config
 
     with dynamo_serve_process(graph_module, config_path, cwd):
-
         if "multimodal" in cwd:
             url = "http://localhost:8000/generate"
             payload = {
-                "model":"llava-hf/llava-1.5-7b-hf",
-                "image":"http://images.cocodataset.org/test2017/000000155781.jpg",
-                "prompt":"Describe the image",
-                "max_tokens": 300
+                "model": "llava-hf/llava-1.5-7b-hf",
+                "image": "http://images.cocodataset.org/test2017/000000155781.jpg",
+                "prompt": "Describe the image",
+                "max_tokens": 300,
             }
         else:
             # Test OpenAI-compatible endpoint
@@ -169,7 +174,7 @@ def test_deployment(etcd_server, nats_server, deployment_config):
         else:
             if response.status_code != 200:
                 pytest.fail("Service failed to start within timeout")
-        
+
         if "multimodal" in cwd:
             assert response.status_code == 200
             assert response.json() is not None
