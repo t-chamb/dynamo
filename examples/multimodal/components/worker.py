@@ -216,14 +216,19 @@ class VllmWorker:
             # The decode worker will pre-allocate the memory based on the prompt token length for the prefill worker to transfer the kv cache.
             # As a workaround, here we manually insert some placeholder dummy tokens based on the embedding size
             # so that decode worker can pre-allocate the memory with the correct size.
-            # The structure of the prompt will be like: "\nUSER: <image> <placeholder_tokens>\nDescribe the image.\nASSISTANT:".
-            # Since the "<image>" token is included in the prompt, the length of the prompt token ids is 7, and the number of
-            # dummy tokens is embedding_size - 1.
-            DUMMY_TOKEN_INDEX = 0
+            # The structure of the prompt will be like: "\nUSER: <image> <dummy_tokens>\n<user_prompt>\nASSISTANT:".
+            # Since the "<image>" token is included in the prompt, only need to insert (embedding_size - 1) dummy tokens after the image token.
+            IMAGE_TOKEN_ID = 32000
+            DUMMY_TOKEN_ID = 0
+            # Find the index of the image token in the prompt token ids
+            image_token_index = request.engine_prompt["prompt_token_ids"].index(
+                IMAGE_TOKEN_ID
+            )
+            dummy_token_index = image_token_index + 1
             prompt_ids = (
-                request.engine_prompt["prompt_token_ids"][:7]
-                + [DUMMY_TOKEN_INDEX] * (self.embedding_size - 1)
-                + request.engine_prompt["prompt_token_ids"][7:]
+                request.engine_prompt["prompt_token_ids"][:dummy_token_index]
+                + [DUMMY_TOKEN_ID] * (self.embedding_size - 1)
+                + request.engine_prompt["prompt_token_ids"][dummy_token_index:]
             )
 
         else:
