@@ -62,7 +62,7 @@ class VllmWorker:
     def __init__(self):
         self.client = None
         self.min_workers = 1
-        self.disaggregated_router: PyDisaggregatedRouter = None  # type: ignore
+        self.disaggregated_router: Optional[PyDisaggregatedRouter] = None
         class_name = self.__class__.__name__
         self.engine_args = parse_vllm_args(class_name, "")
         self.do_remote_prefill = self.engine_args.remote_prefill
@@ -166,7 +166,6 @@ class VllmWorker:
             loop.stop()
 
     def get_remote_prefill_request_callback(self):
-        # TODO: integrate prefill_queue to dynamo endpoint
         async def callback(request: RemotePrefillRequest):
             async with PrefillQueue.get_instance(
                 nats_server=self._prefill_queue_nats_server,
