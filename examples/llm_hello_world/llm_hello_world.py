@@ -13,16 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import asyncio
-from typing import AsyncGenerator
+import logging
 import random
 
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
-from dynamo.runtime.logging import configure_dynamo_logging
 from dynamo.sdk import (
     DYNAMO_IMAGE,
     AbstractDynamoService,
@@ -31,13 +27,8 @@ from dynamo.sdk import (
     dynamo_endpoint,
     service,
 )
-from dynamo.sdk.lib.config import ServiceConfig
 
-from .types import (
-    ChatRequest, ChatResponse,
-    RouteRequest, RouteResponse,
-    GenerateRequest, GenerateResponse,
-)
+from .types import ChatRequest, ChatResponse, GenerateRequest, RouteRequest
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +56,15 @@ Users/Clients (HTTP)
 
 class WorkerInterface(AbstractDynamoService):
     """Interface for LLM workers."""
-    @abstract_dynamo_endpoint # enforces that the service implements the method, but also that it is properly decorated
+
+    @abstract_dynamo_endpoint  # enforces that the service implements the method, but also that it is properly decorated
     async def generate(self, request: GenerateRequest):
         pass
 
 
 class RouterInterface(AbstractDynamoService):
     """Interface for request routers."""
+
     @abstract_dynamo_endpoint
     async def route(self, request: RouteRequest):
         pass
@@ -83,9 +76,8 @@ class VllmWorker(WorkerInterface):
     async def generate(self, request: GenerateRequest):
         # Convert to Spongebob case (randomly capitalize letters)
         for token in request.text.split():
-            spongebob_token = ''.join(
-                c.upper() if random.random() < 0.5 else c.lower()
-                for c in token
+            spongebob_token = "".join(
+                c.upper() if random.random() < 0.5 else c.lower() for c in token
             )
             yield spongebob_token
 
@@ -102,7 +94,7 @@ class TRTLLMWorker(WorkerInterface):
 @service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
 class SlowRouter(RouterInterface):
     worker = depends(WorkerInterface)  # Will be overridden by link()
-    
+
     @dynamo_endpoint()
     async def route(self, request: RouteRequest):
         print("Routing slow")
@@ -114,7 +106,7 @@ class SlowRouter(RouterInterface):
 @service(dynamo={"enabled": True}, image=DYNAMO_IMAGE)
 class FastRouter(RouterInterface):
     worker = depends(WorkerInterface)  # Will be overridden by link()
-    
+
     @dynamo_endpoint()
     async def route(self, request: RouteRequest):
         print("Routing fast")
@@ -129,7 +121,7 @@ app = FastAPI()
 @service(dynamo={"enabled": True}, image=DYNAMO_IMAGE, app=app)
 class Frontend:
     router = depends(RouterInterface)  # Will be overridden by link()
-    
+
     @dynamo_endpoint(is_api=True)
     async def chat_completions(self, request: ChatRequest):
         text = " ".join(msg["content"] for msg in request.messages)
@@ -143,7 +135,7 @@ fast_pipeline = Frontend.link(FastRouter).link(TRTLLMWorker)
 # slow_pipeline = Frontend.link(SlowRouter).link(VllmWorker)
 # mixed_pipeline = Frontend.link(FastRouter).link(VllmWorker)
 
-# Try to pass a 
+# Try to pass a
 
 """
 Example usage:
@@ -158,4 +150,4 @@ The interface-based design allows for:
 1. Easy swapping of implementations (VLLM vs TRT-LLM)
 2. Different routing strategies (slow vs fast)
 3. Type safety through interface contracts
-""" 
+"""

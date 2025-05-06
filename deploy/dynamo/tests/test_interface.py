@@ -1,4 +1,5 @@
 import pytest
+
 from dynamo.sdk.lib.decorators import (
     AbstractDynamoService,
     abstract_dynamo_endpoint,
@@ -116,4 +117,4 @@ def test_non_callable():
 def test_interface_instantiation():
     """Test that interfaces cannot be instantiated."""
     with pytest.raises(TypeError):
-        TestInterface() 
+        TestInterface()

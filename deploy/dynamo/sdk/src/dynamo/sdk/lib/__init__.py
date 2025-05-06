@@ -27,5 +27,6 @@ __all__ = [
     "service",
 ]
 
+
 def main() -> None:
     print("Hello from dynamo sdk!")

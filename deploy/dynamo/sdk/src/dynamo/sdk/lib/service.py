@@ -27,7 +27,8 @@ from _bentoml_sdk.images import Image
 from _bentoml_sdk.service.config import validate
 from fastapi import FastAPI
 
-from dynamo.sdk.lib.decorators import DynamoEndpoint, AbstractDynamoService
+from dynamo.sdk.lib.decorators import AbstractDynamoService, DynamoEndpoint
+
 T = TypeVar("T", bound=object)
 
 logger = logging.getLogger(__name__)
@@ -76,16 +77,17 @@ class LeaseConfig:
     ttl: int = 1  # seconds
 
 
-def _is_dynamo(func: t.Callable | None) -> bool:
+def _is_dynamo(func) -> bool:
     """True if the function is a DynamoEndpoint instance."""
     return isinstance(func, DynamoEndpoint)
 
-def _get_abstract_dynamo_endpoints(cls: type) -> t.Set[str]:
+
+def _get_abstract_dynamo_endpoints(cls: type) -> Set[str]:
     """Get all abstract endpoint names from the class's MRO.
-    
+
     Args:
         cls: The class to check for abstract endpoints
-        
+
     Returns:
         Set of abstract endpoint names
     """
@@ -96,18 +98,20 @@ def _get_abstract_dynamo_endpoints(cls: type) -> t.Set[str]:
         if getattr(val, "__is_abstract_dynamo__", False)
     }
 
+
 def _check_dynamo_endpoint_implemented(cls: type, name: str) -> bool:
     """Check if an endpoint is properly implemented.
-    
+
     Args:
         cls: The class to check
         name: The name of the endpoint to check
-        
+
     Returns:
         True if the endpoint is properly implemented, False otherwise
     """
     impl = getattr(cls, name, None)
     return impl is not None and _is_dynamo(impl)
+
 
 def _validate_dynamo_interfaces(cls: type) -> None:
     """
@@ -117,7 +121,7 @@ def _validate_dynamo_interfaces(cls: type) -> None:
     """
     # TODO: Handle edge cases where there are conflicts in names between the interfaces
     required = _get_abstract_dynamo_endpoints(cls)
-    
+
     missing, undecorated, not_callable = [], [], []
 
     for name in required:
@@ -147,7 +151,9 @@ def _validate_dynamo_interfaces(cls: type) -> None:
         )
 
     if problems:
-        raise TypeError(f"{cls.__name__} violates Dynamo interface — " + "; ".join(problems))
+        raise TypeError(
+            f"{cls.__name__} violates Dynamo interface — " + "; ".join(problems)
+        )
 
 
 class DynamoService(Service[T]):
@@ -277,40 +283,45 @@ class DynamoService(Service[T]):
 
     def link(self, next_service: DynamoService):
         """Link this service to another service, creating a pipeline.
-        
+
         This method allows linking a concrete service implementation to a service that depends on an interface.
         It will:
         1. Find all interface dependencies in the current service
         2. Check if the next_service implements any of those interfaces
         3. If exactly one match is found, override that dependency
         4. If no matches or multiple matches are found, raise an error
-        
+
         Args:
             next_service: The concrete service implementation to link
-            
+
         Raises:
             ValueError: If no matching interface is found or if multiple matches are found
         """
         # Get all dependencies that may be on interfaces
-        interface_deps = [dep.on.inner for dep in self.dependencies.values() 
-                         if issubclass(dep.on.inner, AbstractDynamoService)]
-        
+        interface_deps = [
+            dep.on.inner
+            for dep in self.dependencies.values()
+            if issubclass(dep.on.inner, AbstractDynamoService)
+        ]
+
         if not interface_deps:
-            raise ValueError(f"No AbstractDynamoServices found to override in {self.name}")
-        
+            raise ValueError(
+                f"No AbstractDynamoServices found to override in {self.name}"
+            )
+
         curr_inner = next_service.inner
-            
+
         # Find interfaces that next_service implements
         matching_interfaces = []
         for dep in interface_deps:
             if issubclass(curr_inner, dep):
                 matching_interfaces.append(dep)
-                
+
         if not matching_interfaces:
             raise ValueError(
                 f"{curr_inner.__name__} does not implement any interfaces required by {self.name}"
             )
-            
+
         if len(matching_interfaces) > 1:
             interface_names = [dep.__name__ for dep in matching_interfaces]
             raise ValueError(
@@ -320,7 +331,7 @@ class DynamoService(Service[T]):
         # Track the linked service
         self._linked_services.append(next_service)
         LinkedServices.add((self, next_service))
-        
+
         return next_service
 
     def _remove_service_args(self, service_name: str):
@@ -420,24 +431,27 @@ class DynamoService(Service[T]):
 
     def is_servable(self) -> bool:
         """Check if this service is ready to be served.
-        
+
         A service is servable if:
         1. It is not a subclass of AbstractDynamoService (concrete service)
         2. If it is a subclass of AbstractDynamoService, all abstract methods are implemented
            with @dynamo_endpoint decorators
-           
+
         Returns:
             bool: True if the service is ready to be served, False otherwise
         """
         from dynamo.sdk.lib.decorators import AbstractDynamoService
-        
+
         # If not a AbstractDynamoService, it's servable
         if not issubclass(self.inner, AbstractDynamoService):
             return True
-            
+
         # Get all abstract endpoints and check their implementations
         abstract_endpoints = _get_abstract_dynamo_endpoints(self.inner)
-        return all(_check_dynamo_endpoint_implemented(self.inner, name) for name in abstract_endpoints)
+        return all(
+            _check_dynamo_endpoint_implemented(self.inner, name)
+            for name in abstract_endpoints
+        )
 
 
 def service(
@@ -472,11 +486,11 @@ def service(
     def decorator(inner: type[T]) -> DynamoService[T]:
         if isinstance(inner, Service):
             raise TypeError("service() decorator can only be applied once")
-        
+
         # Validate that if the inner class is a subclass of 1 or more AbstractDynamoServices,
         # it implements all the abstract methods declared in the interfaces
         _validate_dynamo_interfaces(inner)
-        
+
         return DynamoService(
             config=config,
             inner=inner,

@@ -26,7 +26,7 @@ class StorageInterface(AbstractDynamoService):
 @service
 class MyService:
     storage = depends(StorageInterface)  # "I need something that can store data"
-    
+
     @dynamo_endpoint()
     async def process(self, data: str):
         await self.storage.save(data)
@@ -82,10 +82,10 @@ class WorkerInterface(AbstractDynamoService):
     @abstract_dynamo_endpoint
     async def generate(self, request: GenerateRequest):
         """Generate text based on the request.
-        
+
         Args:
             request: The generation request containing input text
-            
+
         Yields:
             Generated text tokens
         """
@@ -101,7 +101,7 @@ class WorkerInterface(AbstractDynamoService):
     @abstract_dynamo_endpoint
     async def generate(self, request: GenerateRequest):
         pass
-        
+
     async def preprocess(self, text: str) -> str:
         """Default implementation of text preprocessing."""
         return text.strip()
@@ -116,10 +116,10 @@ Once you have your interfaces defined, you can declare dependencies in your serv
 class MyService:
     # Declare a dependency on an interface - any implementation will work
     worker = depends(WorkerInterface)
-    
+
     # Declare a dependency on a specific implementation
     specific_worker = depends(VllmWorker)
-    
+
     @dynamo_endpoint()
     async def process(self, request: Request):
         # Use the worker dependency
@@ -157,7 +157,7 @@ class CombinedService(WorkerInterface, RouterInterface):
     @dynamo_endpoint()
     async def generate(self, request: GenerateRequest):
         yield "generated text"
-    
+
     @dynamo_endpoint()
     async def route(self, request: RouteRequest):
         yield "routed text"
@@ -220,7 +220,7 @@ class TRTLLMWorker(WorkerInterface):
 @service
 class FastRouter(RouterInterface):
     worker = depends(WorkerInterface)  # Can use any WorkerInterface implementation
-    
+
     @dynamo_endpoint()
     async def route(self, request: RouteRequest) -> AsyncGenerator[str, None]:
         async for response in self.worker.generate(request):
@@ -230,7 +230,7 @@ class FastRouter(RouterInterface):
 @service
 class SlowRouter(RouterInterface):
     worker = depends(WorkerInterface)  # Can use any WorkerInterface implementation
-    
+
     @dynamo_endpoint()
     async def route(self, request: RouteRequest) -> AsyncGenerator[str, None]:
         async for response in self.worker.generate(request):
@@ -241,7 +241,7 @@ class SlowRouter(RouterInterface):
 @service
 class Frontend:
     router = depends(RouterInterface)  # Can use any RouterInterface implementation
-    
+
     @dynamo_endpoint()
     async def chat(self, request: ChatRequest) -> AsyncGenerator[str, None]:
         route_request = RouteRequest(text=request.message)
@@ -275,7 +275,7 @@ Sometimes you need multiple instances of the same type of service. For example, 
 class ConditionalRouter(RouterInterface):
     worker1 = depends(WorkerInterface)
     worker2 = depends(WorkerInterface)
-    
+
     @dynamo_endpoint()
     async def route(self, request: RouteRequest) -> AsyncGenerator[str, None]:
         if request.should_use_worker1:
@@ -314,4 +314,4 @@ test_pipeline = Frontend.link(MockWorker)
 ## See Also
 
 - [LLM Hello World Example](../examples/llm_hello_world/llm_hello_world.py) - A complete working example of service composition
-- [Interface Example](../examples/interface_example/README.md) - Detailed explanation of interface usage 
+- [Interface Example](../examples/interface_example/README.md) - Detailed explanation of interface usage
