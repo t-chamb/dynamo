@@ -533,7 +533,7 @@ index 000000000..79eb8db67
 +
 +        self.event_id_counter += 1
 diff --git a/vllm/core/scheduler.py b/vllm/core/scheduler.py
-index cf85a2135..f9087b5c3 100644
+index cf85a2135..f157aa231 100644
 --- a/vllm/core/scheduler.py
 +++ b/vllm/core/scheduler.py
 @@ -1,16 +1,30 @@
@@ -702,7 +702,13 @@ index cf85a2135..f9087b5c3 100644
          running_queue = self.running
          assert len(self._async_stopped) == 0
          while running_queue:
-@@ -1073,6 +1138,7 @@ class Scheduler:
+@@ -1068,11 +1133,13 @@ class Scheduler:
+                 ignored_seq_groups=[],
+                 num_lookahead_slots=self._get_num_lookahead_slots(
+                     is_prefill=True, enable_chunking=enable_chunking),
++                num_remote_prefill_groups=0
+             )
+         ignored_seq_groups: List[SequenceGroup] = []
          seq_groups: List[ScheduledSequenceGroup] = []
  
          waiting_queue = self.waiting
@@ -710,7 +716,7 @@ index cf85a2135..f9087b5c3 100644
  
          leftover_waiting_sequences: Deque[SequenceGroup] = deque()
          while self._passed_delay(time.time()) and waiting_queue:
-@@ -1121,8 +1187,10 @@ class Scheduler:
+@@ -1121,8 +1188,10 @@ class Scheduler:
                      True, enable_chunking)
  
              # If the sequence group cannot be allocated, stop.
@@ -722,7 +728,7 @@ index cf85a2135..f9087b5c3 100644
              if can_allocate == AllocStatus.LATER:
                  break
              elif can_allocate == AllocStatus.NEVER:
-@@ -1170,7 +1238,18 @@ class Scheduler:
+@@ -1170,7 +1239,18 @@ class Scheduler:
              if curr_loras is not None and lora_int_id > 0:
                  curr_loras.add(lora_int_id)
              waiting_queue.popleft()
@@ -742,7 +748,7 @@ index cf85a2135..f9087b5c3 100644
  
              if partial_prefill_metadata is not None:
                  partial_prefill_metadata.maybe_increment_partial_prefills(
-@@ -1214,9 +1293,10 @@ class Scheduler:
+@@ -1214,9 +1294,10 @@ class Scheduler:
              ignored_seq_groups=ignored_seq_groups,
              num_lookahead_slots=self._get_num_lookahead_slots(
                  is_prefill=True, enable_chunking=enable_chunking),
@@ -754,7 +760,7 @@ index cf85a2135..f9087b5c3 100644
          """Schedule queued requests.
  
          The current policy is designed to optimize the throughput. First,
-@@ -1234,6 +1314,9 @@ class Scheduler:
+@@ -1234,6 +1315,9 @@ class Scheduler:
          for seq_group in self.running:
              budget.add_num_seqs(seq_group.request_id,
                                  seq_group.get_max_num_running_seqs())
@@ -764,7 +770,7 @@ index cf85a2135..f9087b5c3 100644
          curr_loras = (set(
              seq_group.lora_int_id for seq_group in self.running
              if seq_group.lora_int_id > 0) if self.lora_enabled else None)
-@@ -1258,7 +1341,9 @@ class Scheduler:
+@@ -1258,7 +1342,9 @@ class Scheduler:
          if len(prefills.seq_groups) == 0:
              running_scheduled = self._schedule_running(budget,
                                                         curr_loras,
@@ -775,7 +781,7 @@ index cf85a2135..f9087b5c3 100644
  
              # If any sequence group is preempted, do not swap in any sequence
              # group. because it means there's no slot for new running requests.
-@@ -1275,7 +1360,12 @@ class Scheduler:
+@@ -1275,7 +1361,12 @@ class Scheduler:
          self.waiting.extendleft(running_scheduled.preempted)
          # Update new running requests.
          if len(prefills.seq_groups) > 0:
@@ -789,7 +795,7 @@ index cf85a2135..f9087b5c3 100644
  
          self.running.extend(running_scheduled.decode_seq_groups_list)
  
-@@ -1452,12 +1542,14 @@ class Scheduler:
+@@ -1452,12 +1543,14 @@ class Scheduler:
          ]
          return finishing + not_finishing
  
@@ -806,7 +812,7 @@ index cf85a2135..f9087b5c3 100644
  
      def _can_append_slots(self, seq_group: SequenceGroup,
                            enable_chunking: bool) -> bool:
-@@ -1491,14 +1583,16 @@ class Scheduler:
+@@ -1491,14 +1584,16 @@ class Scheduler:
          return no_single_seq
  
      def schedule(
@@ -826,7 +832,7 @@ index cf85a2135..f9087b5c3 100644
          now = time.time()
  
          if not self.cache_config.enable_prefix_caching:
-@@ -1537,7 +1631,8 @@ class Scheduler:
+@@ -1537,7 +1632,8 @@ class Scheduler:
                  encoder_seq_data = None
                  cross_block_table = None
  
@@ -836,7 +842,7 @@ index cf85a2135..f9087b5c3 100644
                  seq_id = seq.seq_id
                  seq_data[seq_id] = seq.data
                  block_tables[seq_id] = self.block_manager.get_block_table(seq)
-@@ -1546,7 +1641,9 @@ class Scheduler:
+@@ -1546,7 +1642,9 @@ class Scheduler:
              if self.cache_config.enable_prefix_caching:
                  common_computed_block_nums = (
                      self.block_manager.get_common_computed_block_ids(
@@ -847,7 +853,7 @@ index cf85a2135..f9087b5c3 100644
  
              do_sample = True
              is_prompt = seq_group.is_prefill()
-@@ -1568,9 +1665,30 @@ class Scheduler:
+@@ -1568,9 +1666,30 @@ class Scheduler:
                          < seqs[0].data.get_len()):
                      do_sample = False
  
@@ -878,7 +884,7 @@ index cf85a2135..f9087b5c3 100644
                  seq_group_metadata = SequenceGroupMetadata(
                      request_id=seq_group.request_id,
                      is_prompt=is_prompt,
-@@ -1598,6 +1716,7 @@ class Scheduler:
+@@ -1598,6 +1717,7 @@ class Scheduler:
                          if scheduler_outputs.num_prefill_groups > 0 else None),
                      mm_processor_kwargs=seq_group.mm_processor_kwargs,
                      prompt_adapter_request=seq_group.prompt_adapter_request,
@@ -886,7 +892,7 @@ index cf85a2135..f9087b5c3 100644
                  )
              else:
                  # When SPMD mode is enabled, we only send delta data except for
-@@ -1696,10 +1815,16 @@ class Scheduler:
+@@ -1696,10 +1816,16 @@ class Scheduler:
  
              self._async_stopped.clear()
  
