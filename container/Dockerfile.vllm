@@ -289,6 +289,10 @@ COPY --from=base $RUSTUP_HOME $RUSTUP_HOME
 COPY --from=base $CARGO_HOME $CARGO_HOME
 COPY --from=base /workspace /workspace
 COPY --from=base $VIRTUAL_ENV $VIRTUAL_ENV
+COPY --from=base /opt/hpcx/ucx /opt/hpcx/ucx && \
+    echo "/opt/hpcx/ucx/lib" >> /etc/ld.so.conf.d/hpcx.conf && \
+    ldconfig
+COPY --from=base /opt/nixl /opt/nixl
 ENV PATH=$CARGO_HOME/bin:$VIRTUAL_ENV/bin:$PATH
 
 # Copy configuration files
@@ -321,6 +325,13 @@ RUN uv build --wheel --out-dir /workspace/dist && \
     if [ "$RELEASE_BUILD" = "true" ]; then \
         uv build --wheel --out-dir /workspace/dist --python 3.11 && \
         uv build --wheel --out-dir /workspace/dist --python 3.10; \
+    fi
+
+# Build NIXL wheel
+RUN if [ "$ARCH" = "arm64" ]; then \
+        cd /opt/nixl && uv build . --out-dir /workspace/dist --config-settings=setup-args="-Dgds_path=/usr/local/cuda/targets/sbsa-linux/"; \
+    else \
+        cd /opt/nixl && uv build . --out-dir /workspace/dist; \
     fi
 
 #######################################
@@ -420,22 +431,29 @@ FROM ${RUNTIME_IMAGE}:${RUNTIME_IMAGE_TAG} AS runtime
 WORKDIR /workspace
 ENV DYNAMO_HOME=/workspace
 ENV VIRTUAL_ENV=/opt/dynamo/venv
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PATH="${VIRTUAL_ENV}/bin:/usr/local/bin/etcd/:${PATH}"
+### COPY BINDINGS ###
+# Copy all bindings (wheels, lib, include) from ci_minimum
+COPY --from=ci_minimum /opt/dynamo/bindings /opt/dynamo/bindings
+### COPY NATS & ETCD ###
+# Copy nats and etcd from base image
+COPY --from=base /usr/bin/nats-server /usr/bin/nats-server
+COPY --from=base /usr/local/bin/etcd/ /usr/local/bin/etcd/
 
 # Setup the python environment
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-dev && \
-    rm -rf /var/lib/apt/lists/* && \
+    rm -rf /var/lib/apt/lists/* && \ 
     uv venv $VIRTUAL_ENV --python 3.12 && \
     echo "source $VIRTUAL_ENV/bin/activate" >> ~/.bashrc
 
-# Install the wheels and symlink executables to /usr/local/bin so dynamo components can use them
-# Dynamo components currently do not have the VIRTUAL_ENV in their PATH, so we need to symlink the executables
+# Copy NIXL and Dynmao wheels into wheelhouse
 COPY --from=wheel_builder /workspace/dist/*.whl wheelhouse/
+COPY --from=base /workspace/dist/*.whl wheelhouse/
 RUN uv pip install ai-dynamo[vllm] --find-links wheelhouse && \
-    ln -sf $VIRTUAL_ENV/bin/* /usr/local/bin/ && \
-    rm -r wheelhouse
+    uv pip install nixl --no-index --find-links wheelhouse && \
+    ln -sf $VIRTUAL_ENV/bin/* /usr/local/bin/ 
 
 # Tell vllm to use the Dynamo LLM C API for KV Cache Routing
 ENV VLLM_KV_CAPI_PATH="/opt/dynamo/bindings/lib/libdynamo_llm_capi.so"
