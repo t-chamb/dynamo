@@ -24,6 +24,8 @@ from typing import Optional
 import pytest
 import requests
 
+pytestmark = pytest.mark.pre_merge
+
 
 @contextmanager
 def managed_process(
