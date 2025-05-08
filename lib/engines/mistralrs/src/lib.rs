@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::any;
 use std::collections::HashMap;
 use std::{num::NonZero, sync::Arc};
 
@@ -242,6 +243,7 @@ impl MistralRsEngine {
             return_raw_logits: false,
             web_search_options: None,
         });
+        tracing::debug!(request_id, "Sending warmup request");
 
         // Send warmup request and consume response
         if let Ok(sender) = engine.mistralrs.get_sender() {
@@ -252,7 +254,7 @@ impl MistralRsEngine {
                             tracing::debug!(request_id, "Warmup response: {r:?}");
                         }
                         Err(err) => {
-                            tracing::error!(request_id, %err, "Failed converting response to result.");
+                            return Err(anyhow::anyhow!("{}: {}", "Failed converting response to result.", err));
                         }
                     }
                 }
