@@ -4,11 +4,11 @@
 # https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
 # Rust
-*.rs @ryanolson @grahamking @paulhendricks @biswapanda @tmonty12 @guanluo @rmccorm4 @alec-flowers @kkranen @oandreeva-nv @ai-dynamo/Devops @jthomson04
-Cargo.toml @ryanolson @grahamking @paulhendricks @biswapanda @tmonty12 @guanluo @rmccorm4 @kkranen @oandreeva-nv @ai-dynamo/Devops
+*.rs @ryanolson @grahamking @paulhendricks @biswapanda @guanluo @rmccorm4 @alec-flowers @oandreeva-nv @jthomson04 @ai-dynamo/Devops
+Cargo.toml @ryanolson @grahamking @paulhendricks @biswapanda @guanluo @rmccorm4 @oandreeva-nv @jthomson04 @ai-dynamo/Devops
 
 # Python Libraries
-*.py @nnshah1 @tanmayv25 @piotrm-nvidia @ptarasiewiczNV @ryanolson @grahamking @paulhendricks @biswapanda @tmonty12 @guanluo @rmccorm4 @tedzhouhk @alec-flowers @kkranen @ai-dynamo/Devops @jthomson04
+*.py @nnshah1 @guanluo @rmccorm4 @tedzhouhk @alec-flowers @ishandhanani @jthomson04 @ai-dynamo/Devops
 
 # Container/Environments
 /container/ @rmccorm4 @tanmayv25 @ptarasiewiczNV @ishandhanani @alec-flowers @nnshah1 @ai-dynamo/Devops
@@ -16,8 +16,14 @@ Cargo.toml @ryanolson @grahamking @paulhendricks @biswapanda @tmonty12 @guanluo 
 # Dynamo deploy
 /deploy/ @hutm @biswapanda @ishandhanani @julienmancuso @hhzhang16 @nnshah1 @mohammedabdulwahhab
 
-# Dynamo deploy
-/examples/ @hutm @biswapanda @ishandhanani @julienmancuso @hhzhang16 @nnshah1 @tanmayv25 @piotrm-nvidia @ptarasiewiczNV @ryanolson @grahamking @paulhendricks @biswapanda @tmonty12 @guanluo @rmccorm4 @tedzhouhk @alec-flowers @kkranen @sshchoi @PeaBrane @mohammedabdulwahhab @ai-dynamo/Devops
+# Examples
+/examples/hello_world @nnshah1 @rmccorm4 @hutm @biswapanda @ishandhanani @julienmancuso @mohammedabdulwahhab @ai-dynamo/Devops
+
+/examples/llm @ishandhanani @nnshah1 @piotrm-nvidia @ptarasiewiczNV @guanluo @rmccorm4 @tedzhouhk @alec-flowers @sshchoi @PeaBrane @ai-dynamo/Devops
+
+/examples/tensorrt_llm @ishandhanani @nnshah1 @tanmayv25 @richardhuo-nv @guanluo @rmccorm4 @tedzhouhk @ai-dynamo/Devops
+
+/examples/multimodal @krishung5 @indrajit96 @whoisj @rmccorm4 @nnshah1 @ishandhanani  @ai-dynamo/Devops
 
 # CI/CD
 /.github/ @ai-dynamo/Devops @nnshah1
