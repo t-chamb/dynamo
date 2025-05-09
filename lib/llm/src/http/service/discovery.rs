@@ -273,11 +273,12 @@ async fn handle_put(model_entry: &ModelEntry, state: Arc<ModelWatchState>) -> an
                     >::new();
                     let preprocessor = OpenAIPreprocessor::new(card.clone()).await?.into_operator();
                     let backend = Backend::from_mdc(card.clone()).await?.into_operator();
-                    let router = PushRouter::<BackendInput, Annotated<LLMEngineOutput>>::from_client(
-                        client.clone(),
-                        RouterMode::Random, // TODO how do we configure this?
-                    )
-                    .await?;
+                    let router =
+                        PushRouter::<BackendInput, Annotated<LLMEngineOutput>>::from_client(
+                            client.clone(),
+                            RouterMode::Random, // TODO how do we configure this?
+                        )
+                        .await?;
 
                     let chat_engine = frontend
                         .link(preprocessor.forward_edge())?
