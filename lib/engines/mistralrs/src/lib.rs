@@ -13,7 +13,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::any;
 use std::collections::HashMap;
 use std::{num::NonZero, sync::Arc};
 
@@ -243,7 +242,6 @@ impl MistralRsEngine {
             return_raw_logits: false,
             web_search_options: None,
         });
-        tracing::debug!(request_id, "Sending warmup request");
 
         // Send warmup request and consume response
         if let Ok(sender) = engine.mistralrs.get_sender() {
