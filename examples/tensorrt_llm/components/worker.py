@@ -14,13 +14,15 @@
 # limitations under the License.
 import asyncio
 import logging
+import uuid
 
 from common.base_engine import BaseTensorrtLLMEngine
 from common.parser import parse_tensorrt_llm_args
-from common.protocol import TRTLLMWorkerRequest
+from common.protocol import PreprocessedRequest, Tokens, TRTLLMWorkerRequest
 from common.utils import ServerType
 from components.prefill_worker import TensorRTLLMPrefillWorker
 
+from dynamo.llm import ModelType, register_llm
 from dynamo.sdk import async_on_start, depends, dynamo_context, dynamo_endpoint, service
 from dynamo.sdk.lib.config import ServiceConfig
 
@@ -42,14 +44,14 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
         class_name = self.__class__.__name__
         config = ServiceConfig.get_instance()
         config_args = config.as_args(class_name, prefix="")
-        args, engine_config = parse_tensorrt_llm_args(config_args)
+        args, self.engine_config = parse_tensorrt_llm_args(config_args)
         worker_id = dynamo_context["endpoints"][0].lease_id()
         self._min_prefill_workers = args.min_prefill_workers
         super().__init__(
             namespace_str="dynamo",
             component_str=class_name,
             worker_id=worker_id,
-            engine_config=engine_config,
+            engine_config=self.engine_config,
             remote_prefill=args.remote_prefill,
             min_workers=args.min_workers,
             disagg_config_file=args.llmapi_disaggregated_config,
@@ -60,11 +62,31 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
 
     @async_on_start
     async def async_init(self):
+        logger.info("Async Initializing TensorRT-LLM Worker engine...")
         self._init_engine()
 
+        runtime = dynamo_context["runtime"]
+        comp_ns, comp_name = TensorRTLLMPrefillWorker.dynamo_address()  # type: ignore
+
+        # Register an endpoint that accepts pre-processed requests for integration
+        # with dynamo-run in=http out=dyn://{endpoint}
+        endpoint = (
+            runtime.namespace(comp_ns)
+            .component(comp_name)
+            .endpoint("generate_preprocessed")
+        )
+        logger.info(f"Registering LLM for discovery at endpoint: {endpoint} ...")
+        await register_llm(
+            ModelType.Backend,
+            endpoint,
+            self.engine_config.model_path,
+            # TODO: served model name?
+            self.engine_config.model_name,
+        )
+        logger.info(f"Registered LLM for discovery at endpoint: {endpoint}")
+
         if self._remote_prefill:
-            runtime = dynamo_context["runtime"]
-            comp_ns, comp_name = TensorRTLLMPrefillWorker.dynamo_address()  # type: ignore
+            # Wait for prefill workers
             self._prefill_client = (
                 await runtime.namespace(comp_ns)
                 .component(comp_name)
@@ -77,7 +99,7 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
                     f" Current: {len(self._prefill_client.endpoint_ids())},"
                     f" Required: {self._min_prefill_workers}"
                 )
-                await asyncio.sleep(30)
+                await asyncio.sleep(10)
 
         if self._kv_metrics_publisher is not None:
             task = asyncio.create_task(self.create_metrics_publisher_endpoint())
@@ -90,6 +112,43 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
     async def create_metrics_publisher_endpoint(self):
         component = dynamo_context["component"]
         await self._kv_metrics_publisher.create_endpoint(component)
+
+    @dynamo_endpoint()
+    async def generate_preprocessed(self, request: PreprocessedRequest):
+        # Convert to TRTLLMWorkerRequest
+        sampling_params = {
+            "max_tokens": request.stop_conditions.max_tokens,
+            "stop": request.stop_conditions.stop,
+            "stop_token_ids": request.stop_conditions.stop_token_ids_hidden,
+            "temperature": request.sampling_options.temperature,
+            "top_p": request.sampling_options.top_p,
+            "top_k": request.sampling_options.top_k,
+            "repetition_penalty": request.sampling_options.repetition_penalty,
+            "presence_penalty": request.sampling_options.presence_penalty,
+            "frequency_penalty": request.sampling_options.frequency_penalty,
+            "min_p": request.sampling_options.min_p,
+            "seed": request.sampling_options.seed,
+            "ignore_eos": request.stop_conditions.ignore_eos,
+            "use_beam_search": request.sampling_options.use_beam_search,
+            "length_penalty": request.sampling_options.length_penalty,
+            "min_tokens": request.stop_conditions.min_tokens,
+        }
+
+        # Remove None values
+        sampling_params = {k: v for k, v in sampling_params.items() if v is not None}
+
+        trtllm_request = TRTLLMWorkerRequest(
+            # TODO: served model name?
+            model=self.engine_config.model_name,
+            id=str(uuid.uuid4()),
+            sampling_params=sampling_params,
+            streaming=True,
+            tokens=Tokens(tokens=request.token_ids),
+        )
+
+        # Call internal generate
+        async for response in self.generate(trtllm_request):
+            yield response
 
     @dynamo_endpoint()
     async def generate(self, request: TRTLLMWorkerRequest):
