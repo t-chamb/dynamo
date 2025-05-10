@@ -28,9 +28,9 @@ description = "Dynamo LLM Library"
 default = []
 
 testing-full  = ["testing-cuda", "testing-nixl"]
-testing-cuda  = ["dep:cudarc"]
-testing-nixl  = ["dep:nixl-sys"]
-block-manager = ["dep:nixl-sys", "dep:cudarc", "dep:ndarray"]
+testing-cuda  = ["cudarc"]
+testing-nixl  = ["nixl-sys"]
+block-manager = ["nixl-sys", "cudarc", "ndarray"]
 sentencepiece = ["dep:sentencepiece"]
 
 [dependencies]
