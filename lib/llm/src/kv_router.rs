@@ -42,7 +42,7 @@ use crate::{
         scheduler::{KvScheduler, KvSchedulerError, SchedulingRequest},
         scoring::ProcessedEndpoints,
     },
-    tokens::TokenBlockSequence,
+    tokens::Tokens,
 };
 
 use dynamo_runtime::traits::events::EventSubscriber;
@@ -149,13 +149,14 @@ impl AsyncEngine<SingleIn<RouterRequest>, ManyOut<Annotated<RouterResponse>>, Er
         let isl_tokens = request.tokens.len();
         let block_size = self.block_size;
 
-        let (complete_blocks, _partial_block) =
-            TokenBlockSequence::split_tokens(&request.tokens, block_size, 1337_u64);
-
-        let local_block_hashes = complete_blocks
-            .into_iter()
-            .map(|block| LocalBlockHash(block.block_hash()))
-            .collect();
+        // Compute the block hashes in a blocking task
+        let local_block_hashes: Vec<LocalBlockHash> = tokio::task::spawn_blocking(move || {
+            Tokens::compute_block_hash(&request.tokens, block_size)
+                .into_iter()
+                .map(LocalBlockHash)
+                .collect()
+        })
+        .await?;
 
         let overlap_scores = self.indexer.find_matches(local_block_hashes).await?;
         let worker_id = self.scheduler.schedule(overlap_scores, isl_tokens).await?;
