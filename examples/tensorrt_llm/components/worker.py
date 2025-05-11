@@ -18,7 +18,12 @@ import uuid
 
 from common.base_engine import BaseTensorrtLLMEngine
 from common.parser import parse_tensorrt_llm_args
-from common.protocol import PreprocessedRequest, Tokens, TRTLLMWorkerRequest
+from common.protocol import (
+    PreprocessedRequest,
+    Tokens,
+    TRTLLMWorkerRequest,
+    TRTLLMWorkerResponse,
+)
 from common.utils import ServerType
 from components.prefill_worker import TensorRTLLMPrefillWorker
 
@@ -66,30 +71,34 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
         self._init_engine()
 
         runtime = dynamo_context["runtime"]
-        comp_ns, comp_name = TensorRTLLMPrefillWorker.dynamo_address()  # type: ignore
+        comp_ns, comp_name = TensorRTLLMWorker.dynamo_address()  # type: ignore
 
         # Register an endpoint that accepts pre-processed requests for integration
         # with dynamo-run in=http out=dyn://{endpoint}
+        endpoint_str = "generate_preprocessed"
         endpoint = (
-            runtime.namespace(comp_ns)
-            .component(comp_name)
-            .endpoint("generate_preprocessed")
+            runtime.namespace(comp_ns).component(comp_name).endpoint(endpoint_str)
         )
-        logger.info(f"Registering LLM for discovery at endpoint: {endpoint} ...")
+        logger.info(
+            f"Registering LLM for discovery at endpoint: {comp_ns}/{comp_name}/{endpoint_str} ..."
+        )
         await register_llm(
             ModelType.Backend,
             endpoint,
-            self.engine_config.model_path,
+            self.engine_config.model_name,
             # TODO: served model name?
             self.engine_config.model_name,
         )
-        logger.info(f"Registered LLM for discovery at endpoint: {endpoint}")
+        logger.info(
+            f"Registered LLM for discovery at endpoint: {comp_ns}/{comp_name}/{endpoint_str} for model_name: {self.engine_config.model_name} ..."
+        )
 
         if self._remote_prefill:
+            prefill_comp_ns, prefill_comp_name = TensorRTLLMPrefillWorker.dynamo_address()  # type: ignore
             # Wait for prefill workers
             self._prefill_client = (
-                await runtime.namespace(comp_ns)
-                .component(comp_name)
+                await runtime.namespace(prefill_comp_ns)
+                .component(prefill_comp_name)
                 .endpoint("generate")
                 .client()
             )
@@ -137,6 +146,7 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
         # Remove None values
         sampling_params = {k: v for k, v in sampling_params.items() if v is not None}
 
+        # TODO: Support disaggregated params
         trtllm_request = TRTLLMWorkerRequest(
             # TODO: served model name?
             model=self.engine_config.model_name,
@@ -146,8 +156,19 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
             tokens=Tokens(tokens=request.token_ids),
         )
 
-        # Call internal generate
-        async for response in self.generate(trtllm_request):
+        # Call generate on internal engine
+        async for response_str in super().generate(trtllm_request):
+            trt_response = TRTLLMWorkerResponse.model_validate_json(response_str)
+            # Every chunk returns all of the output tokens seen so far, iteratively
+            # appending new tokens to the end of the returned token_ids. For
+            # efficiency, just return the net new tokens (delta).
+            outputs = trt_response.outputs[0]
+            new_token_start_idx = outputs["_last_token_ids_len"]
+            new_tokens = outputs["token_ids"][new_token_start_idx:]
+            response = {"token_ids": new_tokens}
+            finish_reason = outputs.get("finish_reason")
+            if finish_reason:
+                response["finish_reason"] = finish_reason
             yield response
 
     @dynamo_endpoint()

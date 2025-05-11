@@ -15,6 +15,9 @@
 
 Frontend:
   served_model_name: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  # Endpoint for already pre-processed requests by dynamo-run http frontend
+  endpoint: dynamo.TensorRTLLMWorker.generate_preprocessed
+  # Endpoint for un-processed OpenAI requests
   endpoint_completions: dynamo.Processor.completions
   endpoint_chat: dynamo.Processor.chat/completions
   port: 8000
