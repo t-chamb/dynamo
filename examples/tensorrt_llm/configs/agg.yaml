@@ -14,6 +14,7 @@
 # limitations under the License.
 
 Frontend:
+  # FIXME: Respect served_model_name with dynamo-run
   served_model_name: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
   # Endpoint for already pre-processed requests by dynamo-run http frontend
   endpoint: dynamo.TensorRTLLMWorker.generate_preprocessed

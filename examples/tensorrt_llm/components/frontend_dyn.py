@@ -80,6 +80,10 @@ class Frontend:
                 f"out={endpoint}",
                 "--http-port",
                 str(self.frontend_config.port),
+                # TODO: Expose as frontend config if python Procesor/Router are
+                # removed, it's confusing while they're still used otherwise.
+                "--router-mode",
+                "round-robin",
             ],
             stdout=None,
             stderr=None,
