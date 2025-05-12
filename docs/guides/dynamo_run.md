@@ -201,13 +201,12 @@ cargo build --features llamacpp[,cuda|metal|vulkan] -p dynamo-run
 ```
 
 ```
-dynamo-run out=llamacpp ~/llms/Llama-3.2-3B-Instruct-Q6_K.gguf
+dynamo-run out=llamacpp ~/llms/gemma-3-1b-it-q4_0.gguf
+dynamo-run out=llamacpp ~/llms/Qwen3-0.6B-Q8_0.gguf # From https://huggingface.co/ggml-org
 ```
 
 Note that in some cases we are unable to extract the tokenizer from the GGUF, and so a Hugging Face checkout of a matching model must also be passed. Dynamo will use the weights from the GGUF and the pre-processor (`tokenizer.json`, etc) from the `--model-config`:
 ```
-dynamo-run out=llamacpp ~/llms/gemma-3-1b-it-q4_0.gguf --model-config ~/llms/gemma-3-1b-it
-
 dynamo-run out=llamacpp ~/llms/Llama-4-Scout-17B-16E-Instruct-UD-IQ1_S.gguf --model-config ~/llms/Llama-4-Scout-17B-16E-Instruct
 ```
 
@@ -439,7 +438,7 @@ async def worker(runtime: DistributedRuntime):
 
     # 3. Attach request handler
     #
-    await endpoint.serve_endpoint(RequestHandler(engine).generate, None)
+    await endpoint.serve_endpoint(RequestHandler(engine).generate)
 
 class RequestHandler:
 
@@ -468,8 +467,14 @@ The `model_type` can be:
 - ModelType.Completion. Your `generate` method receives a `request` and must return a response dict of the older [Completions](https://platform.openai.com/docs/api-reference/completions). Your engine handles pre-processing.
 
 Here are some example engines:
-- [vllm simple](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/examples/hello_world/server_vllm.py)
-- [sglang simple](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/examples/hello_world/server_sglang.py)
+
+- Backend:
+    * [vllm](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/examples/hello_world/server_vllm.py)
+    * [sglang](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/examples/hello_world/server_sglang.py)
+- Chat:
+    * [sglang](https://github.com/ai-dynamo/dynamo/blob/main/lib/bindings/python/examples/hello_world/server_sglang_tok.py)
+
+More fully-featured Backend engines (used by `dynamo-run`):
 - [vllm](https://github.com/ai-dynamo/dynamo/blob/main/launch/dynamo-run/src/subprocess/vllm_inc.py)
 - [sglang](https://github.com/ai-dynamo/dynamo/blob/main/launch/dynamo-run/src/subprocess/sglang_inc.py)
 

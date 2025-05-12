@@ -1007,7 +1007,7 @@ dependencies = [
 
 [[package]]
 name = "dynamo-engine-python"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-openai",
@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "dynamo-llm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "akin",
  "anyhow",
@@ -1058,6 +1058,7 @@ dependencies = [
  "memmap2",
  "minijinja",
  "minijinja-contrib",
+ "oneshot",
  "prometheus",
  "rand 0.9.1",
  "rayon",
@@ -1083,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "dynamo-py3"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dynamo-engine-python",
  "dynamo-llm",
@@ -1104,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "dynamo-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-nats",
@@ -2860,6 +2861,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
+name = "oneshot"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4ce411919553d3f9fa53a0880544cda985a112117a0444d5ff1e870a893d6ea"
+
+[[package]]
 name = "onig"
 version = "6.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4563,8 +4570,10 @@ dependencies = [
  "percent-encoding",
  "pin-project",
  "prost",
+ "rustls-pemfile",
  "socket2",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tower 0.4.13",
  "tower-layer",
