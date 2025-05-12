@@ -34,6 +34,40 @@ from dynamo.sdk.lib.config import ServiceConfig
 logger = logging.getLogger(__name__)
 
 
+def convert_to_trtllm_worker_request(request: PreprocessedRequest, model_name: str):
+    # Convert to TRTLLMWorkerRequest
+    sampling_params = {
+        "max_tokens": request.stop_conditions.max_tokens,
+        "stop": request.stop_conditions.stop,
+        "stop_token_ids": request.stop_conditions.stop_token_ids_hidden,
+        "temperature": request.sampling_options.temperature,
+        "top_p": request.sampling_options.top_p,
+        "top_k": request.sampling_options.top_k,
+        "repetition_penalty": request.sampling_options.repetition_penalty,
+        "presence_penalty": request.sampling_options.presence_penalty,
+        "frequency_penalty": request.sampling_options.frequency_penalty,
+        "min_p": request.sampling_options.min_p,
+        "seed": request.sampling_options.seed,
+        "ignore_eos": request.stop_conditions.ignore_eos,
+        "use_beam_search": request.sampling_options.use_beam_search,
+        "length_penalty": request.sampling_options.length_penalty,
+        "min_tokens": request.stop_conditions.min_tokens,
+    }
+
+    # Remove None values
+    sampling_params = {k: v for k, v in sampling_params.items() if v is not None}
+
+    return TRTLLMWorkerRequest(
+        # TODO: served model name?
+        # model=self.engine_config.model_name,
+        model=model_name,
+        id=str(uuid.uuid4()),
+        sampling_params=sampling_params,
+        streaming=True,
+        tokens=Tokens(tokens=request.token_ids),
+    )
+
+
 @service(
     dynamo={
         "namespace": "dynamo",
@@ -124,36 +158,8 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
 
     @dynamo_endpoint()
     async def generate_preprocessed(self, request: PreprocessedRequest):
-        # Convert to TRTLLMWorkerRequest
-        sampling_params = {
-            "max_tokens": request.stop_conditions.max_tokens,
-            "stop": request.stop_conditions.stop,
-            "stop_token_ids": request.stop_conditions.stop_token_ids_hidden,
-            "temperature": request.sampling_options.temperature,
-            "top_p": request.sampling_options.top_p,
-            "top_k": request.sampling_options.top_k,
-            "repetition_penalty": request.sampling_options.repetition_penalty,
-            "presence_penalty": request.sampling_options.presence_penalty,
-            "frequency_penalty": request.sampling_options.frequency_penalty,
-            "min_p": request.sampling_options.min_p,
-            "seed": request.sampling_options.seed,
-            "ignore_eos": request.stop_conditions.ignore_eos,
-            "use_beam_search": request.sampling_options.use_beam_search,
-            "length_penalty": request.sampling_options.length_penalty,
-            "min_tokens": request.stop_conditions.min_tokens,
-        }
-
-        # Remove None values
-        sampling_params = {k: v for k, v in sampling_params.items() if v is not None}
-
-        # TODO: Support disaggregated params
-        trtllm_request = TRTLLMWorkerRequest(
-            # TODO: served model name?
-            model=self.engine_config.model_name,
-            id=str(uuid.uuid4()),
-            sampling_params=sampling_params,
-            streaming=True,
-            tokens=Tokens(tokens=request.token_ids),
+        trtllm_request = convert_to_trtllm_worker_request(
+            request, self.engine_config.model_name
         )
 
         # Call generate on internal engine

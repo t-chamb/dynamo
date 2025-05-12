@@ -22,11 +22,14 @@ from common.parser import parse_tensorrt_llm_args
 from common.protocol import (
     DynamoTRTLLMChatCompletionRequest,
     DynamoTRTLLMCompletionRequest,
+    PreprocessedRequest,
+    TRTLLMWorkerResponse,
 )
 from common.utils import RequestType
 from components.kv_router import Router
-from components.worker import TensorRTLLMWorker
+from components.worker import TensorRTLLMWorker, convert_to_trtllm_worker_request
 
+from dynamo.llm import ModelType, register_llm
 from dynamo.sdk import async_on_start, depends, dynamo_context, dynamo_endpoint, service
 from dynamo.sdk.lib.config import ServiceConfig
 
@@ -50,13 +53,13 @@ class Processor(ChatProcessorMixin):
         class_name = self.__class__.__name__
         config = ServiceConfig.get_instance()
         config_args = config.as_args(class_name, prefix="")
-        args, engine_config = parse_tensorrt_llm_args(config_args)
+        args, self.engine_config = parse_tensorrt_llm_args(config_args)
         self.remote_prefill = args.remote_prefill
         self.router_mode = args.router
         self.min_workers = 1
         self.args = args
 
-        super().__init__(engine_config)
+        super().__init__(self.engine_config)
 
     @async_on_start
     async def async_init(self):
@@ -67,6 +70,30 @@ class Processor(ChatProcessorMixin):
             .component(comp_name)
             .endpoint("generate")
             .client()
+        )
+
+        proc_comp_ns, proc_comp_name = Processor.dynamo_address()  # type: ignore
+
+        # Register an endpoint that accepts pre-processed requests for integration
+        # with dynamo-run in=http out=dyn://{endpoint}
+        endpoint_str = "generate_preprocessed"
+        endpoint = (
+            runtime.namespace(proc_comp_ns)
+            .component(proc_comp_name)
+            .endpoint(endpoint_str)
+        )
+        logger.info(
+            f"Registering LLM for discovery at endpoint: {comp_ns}/{comp_name}/{endpoint_str} ..."
+        )
+        await register_llm(
+            ModelType.Backend,
+            endpoint,
+            self.engine_config.model_name,
+            # TODO: served model name?
+            self.engine_config.model_name,
+        )
+        logger.info(
+            f"Registered LLM for discovery at endpoint: {comp_ns}/{comp_name}/{endpoint_str} for model_name: {self.engine_config.model_name} ..."
         )
 
         if self.args.router == "kv":
@@ -142,6 +169,65 @@ class Processor(ChatProcessorMixin):
             ):
                 logger.debug(f"[preprocessor] Response: {response}")
                 yield json.loads(response)
+
+    @dynamo_endpoint()
+    async def generate_preprocessed(self, request: PreprocessedRequest):
+        preprocessed_request = convert_to_trtllm_worker_request(
+            request, self.engine_config.model_name
+        )
+
+        # TODO: Test KV Routing handling
+        worker_id = ""
+        if self.router_mode == "kv":
+            router_generator = await self.router_client.generate(
+                preprocessed_request.tokens.model_dump_json()
+            )
+            decision = await router_generator.__anext__()
+            decision = decision.data()
+            worker_id, prefix_hit_rate = decision.split("_")
+            prefix_hit_rate = float(prefix_hit_rate)
+            logger.info(
+                f"Worker ID: {worker_id} with estimated prefix hit rate: {prefix_hit_rate}"
+            )
+
+        if worker_id == "":
+            if self.router_mode == "round-robin":
+                self._send_request = self.worker_client.round_robin
+            else:
+                # fallback to random
+                self._send_request = self.worker_client.random
+
+            engine_generator = await self._send_request(
+                preprocessed_request.model_dump_json()
+            )
+
+        else:
+            engine_generator = await self.worker_client.direct(
+                preprocessed_request.model_dump_json(), int(worker_id)
+            )
+
+        # async for response in engine_generator:
+        #    logger.debug(f"[preprocessor] Response: {response}")
+        #    yield json.loads(response)
+
+        # Call generate on internal engine
+        async for raw_response in engine_generator:
+            print(f"{type(raw_response)=}")
+            print(f"{raw_response=}")
+            print(f"{raw_response.data()=}")
+            trt_response = TRTLLMWorkerResponse.model_validate_json(raw_response.data())
+            print(f"{trt_response=}")
+            # Every chunk returns all of the output tokens seen so far, iteratively
+            # appending new tokens to the end of the returned token_ids. For
+            # efficiency, just return the net new tokens (delta).
+            outputs = trt_response.outputs[0]
+            new_token_start_idx = outputs["_last_token_ids_len"]
+            new_tokens = outputs["token_ids"][new_token_start_idx:]
+            response = {"token_ids": new_tokens}
+            finish_reason = outputs.get("finish_reason")
+            if finish_reason:
+                response["finish_reason"] = finish_reason
+            yield response
 
     @dynamo_endpoint(name="chat/completions")
     async def generate_chat(self, raw_request: DynamoTRTLLMChatCompletionRequest):
