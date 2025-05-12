@@ -60,9 +60,22 @@ pub mod llm_kvbm {
         // TODO: Implement the Dynamo Event Manager
     }
 
+    impl DynamoEventManager {
+        pub fn new() -> (
+            Arc<Self>,
+            tokio::sync::mpsc::UnboundedReceiver<Vec<EventType>>, //todo change for a proper receiver
+        ) {
+            todo!()
+        }
+
+        pub fn publisher(self: &Arc<Self>) -> Publisher {
+            Publisher::new(self.clone())
+        }
+    }
+
     impl EventManager for DynamoEventManager {}
 
-    impl BlockRegisterPubliser for DynamoEventManager {
+    impl BlockRegisterPublisher for DynamoEventManager {
         fn publish(&self, _handles: Vec<Arc<RegistrationHandle>>) {
             unimplemented!()
         }
