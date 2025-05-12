@@ -13,17 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import json
 import logging
 import uuid
+from collections import deque
+from typing import Any, Dict, List
 
 from common.base_engine import BaseTensorrtLLMEngine
 from common.parser import parse_tensorrt_llm_args
-from common.protocol import (
-    PreprocessedRequest,
-    Tokens,
-    TRTLLMWorkerRequest,
-    TRTLLMWorkerResponse,
-)
+from common.protocol import PreprocessedRequest, Tokens, TRTLLMWorkerRequest
 from common.utils import ServerType
 from components.prefill_worker import TensorRTLLMPrefillWorker
 
@@ -126,50 +124,123 @@ class TensorRTLLMWorker(BaseTensorrtLLMEngine):
     async def generate_preprocessed(self, request: PreprocessedRequest):
         # Convert to TRTLLMWorkerRequest
         sampling_params = {
-            "max_tokens": request.stop_conditions.max_tokens,
-            "stop": request.stop_conditions.stop,
-            "stop_token_ids": request.stop_conditions.stop_token_ids_hidden,
-            "temperature": request.sampling_options.temperature,
-            "top_p": request.sampling_options.top_p,
-            "top_k": request.sampling_options.top_k,
-            "repetition_penalty": request.sampling_options.repetition_penalty,
-            "presence_penalty": request.sampling_options.presence_penalty,
-            "frequency_penalty": request.sampling_options.frequency_penalty,
-            "min_p": request.sampling_options.min_p,
-            "seed": request.sampling_options.seed,
-            "ignore_eos": request.stop_conditions.ignore_eos,
-            "use_beam_search": request.sampling_options.use_beam_search,
-            "length_penalty": request.sampling_options.length_penalty,
-            "min_tokens": request.stop_conditions.min_tokens,
+            k: v
+            for k, v in {
+                "max_tokens": request.stop_conditions.max_tokens,
+                "stop": request.stop_conditions.stop,
+                "stop_token_ids": request.stop_conditions.stop_token_ids_hidden,
+                "temperature": request.sampling_options.temperature,
+                "top_p": request.sampling_options.top_p,
+                "top_k": request.sampling_options.top_k,
+                "repetition_penalty": request.sampling_options.repetition_penalty,
+                "presence_penalty": request.sampling_options.presence_penalty,
+                "frequency_penalty": request.sampling_options.frequency_penalty,
+                "min_p": request.sampling_options.min_p,
+                "seed": request.sampling_options.seed,
+                "ignore_eos": request.stop_conditions.ignore_eos,
+                "use_beam_search": request.sampling_options.use_beam_search,
+                "length_penalty": request.sampling_options.length_penalty,
+                "min_tokens": request.stop_conditions.min_tokens,
+            }.items()
+            if v is not None
         }
 
-        # Remove None values
-        sampling_params = {k: v for k, v in sampling_params.items() if v is not None}
-
-        # TODO: Support disaggregated params
+        # Create request with pre-generated UUID to avoid blocking
+        request_id = str(uuid.uuid4())
         trtllm_request = TRTLLMWorkerRequest(
-            # TODO: served model name?
             model=self.engine_config.model_name,
-            id=str(uuid.uuid4()),
+            id=request_id,
             sampling_params=sampling_params,
             streaming=True,
             tokens=Tokens(tokens=request.token_ids),
         )
 
-        # Call generate on internal engine
-        async for response_str in super().generate(trtllm_request):
-            trt_response = TRTLLMWorkerResponse.model_validate_json(response_str)
-            # Every chunk returns all of the output tokens seen so far, iteratively
-            # appending new tokens to the end of the returned token_ids. For
-            # efficiency, just return the net new tokens (delta).
-            outputs = trt_response.outputs[0]
-            new_token_start_idx = outputs["_last_token_ids_len"]
-            new_tokens = outputs["token_ids"][new_token_start_idx:]
-            response = {"token_ids": new_tokens}
-            finish_reason = outputs.get("finish_reason")
-            if finish_reason:
-                response["finish_reason"] = finish_reason
-            yield response
+        # Use a queue to manage processing tasks and maintain order
+        processing_queue = deque()
+        pending_tasks: List[asyncio.Task] = []
+
+        # Define async parsing function
+        async def parse_response(response_str: str) -> Dict[str, Any]:
+            try:
+                # Parse JSON in the task
+                trt_response = json.loads(response_str)
+                outputs = trt_response["outputs"][0]
+                new_token_start_idx = outputs["_last_token_ids_len"]
+                new_tokens = outputs["token_ids"][new_token_start_idx:]
+                response = {"token_ids": new_tokens}
+                if finish_reason := outputs.get("finish_reason"):
+                    response["finish_reason"] = finish_reason
+                return response
+            except Exception as e:
+                logger.error(f"Error parsing response: {e}")
+                return {"error": str(e)}
+
+        try:
+            # Start the generator and process responses asynchronously
+            response_gen = super().generate(trtllm_request)
+
+            # Track if we're done processing
+            done_generating = False
+
+            while processing_queue or not done_generating:
+                # Try to get more responses if we're not done
+                if not done_generating:
+                    try:
+                        # Use asyncio.wait with timeout to avoid blocking indefinitely
+                        next_response_task = asyncio.create_task(
+                            response_gen.__anext__()
+                        )
+                        pending_tasks.append(next_response_task)
+                        done, pending_tasks = await asyncio.wait(
+                            [next_response_task],
+                            timeout=0.001,  # Small timeout to check queue frequently
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+
+                        if done:
+                            # We got a new response, process it asynchronously
+                            next_response = await next_response_task
+                            task = asyncio.create_task(parse_response(next_response))
+                            processing_queue.append(task)
+                    except StopAsyncIteration:
+                        # Generator is exhausted
+                        done_generating = True
+                    except Exception as e:
+                        logger.error(f"Error getting next response: {e}")
+                        done_generating = True
+
+                # Process completed tasks from the queue
+                while processing_queue and processing_queue[0].done():
+                    task = processing_queue.popleft()
+                    try:
+                        result = await task
+                        if "error" not in result:
+                            yield result
+                    except Exception as e:
+                        logger.error(f"Task processing error: {e}")
+
+                # If queue is empty but we're still generating, small sleep to avoid tight loop
+                if not processing_queue and not done_generating:
+                    await asyncio.sleep(0.001)
+
+                # If we have pending tasks in the queue, wait for at least one to complete
+                if processing_queue and not processing_queue[0].done():
+                    # Wait for the first task or a short timeout
+                    await asyncio.wait(
+                        [processing_queue[0]],
+                        timeout=0.005,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+        finally:
+            # Clean up any remaining tasks
+            for task in pending_tasks:
+                if not task.done():
+                    task.cancel()
+
+            for task in processing_queue:
+                if not task.done():
+                    task.cancel()
 
     @dynamo_endpoint()
     async def generate(self, request: TRTLLMWorkerRequest):
