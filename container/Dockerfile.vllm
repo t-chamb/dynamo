@@ -472,7 +472,6 @@ FROM ${RUNTIME_IMAGE}:${RUNTIME_IMAGE_TAG} AS runtime
 WORKDIR /workspace
 ENV DYNAMO_HOME=/workspace
 ENV VIRTUAL_ENV=/opt/dynamo/venv
-ENV PATH="${VIRTUAL_ENV}/bin:/usr/local/bin/etcd/:${PATH}"
 ### COPY BINDINGS ###
 # Copy all bindings (wheels, lib, include) from ci_minimum
 COPY --from=ci_minimum /opt/dynamo/bindings /opt/dynamo/bindings
@@ -481,6 +480,7 @@ COPY --from=ci_minimum /opt/dynamo/bindings /opt/dynamo/bindings
 COPY --from=base /usr/bin/nats-server /usr/bin/nats-server
 COPY --from=base /usr/local/bin/etcd/ /usr/local/bin/etcd/
 
+ENV PATH="${VIRTUAL_ENV}/bin:/usr/local/bin/etcd/:${PATH}"
 # Setup the python environment
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && \
