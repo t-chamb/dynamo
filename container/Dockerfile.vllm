@@ -332,8 +332,8 @@ COPY --from=base $CARGO_HOME $CARGO_HOME
 COPY --from=base /usr/local/nixl /opt/nvidia/nvda_nixl
 COPY --from=base /workspace /workspace
 COPY --from=base $VIRTUAL_ENV $VIRTUAL_ENV
-COPY --from=base /opt/hpcx/ucx /opt/hpcx/ucx
-RUN echo "/opt/hpcx/ucx/lib" >> /etc/ld.so.conf.d/hpcx.conf && \
+COPY --from=base /usr/local/ucx /usr/local/ucx
+RUN echo "/usr/local/ucx/lib" >> /etc/ld.so.conf.d/hpcx.conf && \
     ldconfig
 COPY --from=base /opt/nixl /opt/nixl
 ENV PATH=$CARGO_HOME/bin:$VIRTUAL_ENV/bin:$PATH
@@ -371,7 +371,7 @@ RUN uv build --wheel --out-dir /workspace/dist && \
     fi
 
 # Build NIXL wheel
-RUN cd /opt/nixl && uv build . --out-dir /workspace/dist --config-settings=setup-args="-Ducx_path=/opt/hpcx/ucx"
+RUN cd /opt/nixl && uv build . --out-dir /workspace/dist --config-settings=setup-args="-Ducx_path=/usr/local/ucx"
 
 #######################################
 ########## CI Minimum Image ###########
