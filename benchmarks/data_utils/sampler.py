@@ -1,8 +1,11 @@
+import logging
 from collections import Counter
-from typing import List, Tuple, Dict, Any, Union, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from numpy.random import Generator
+
+logger = logging.getLogger(__name__)
 
 
 def get_cdf(weights: List[float]) -> np.ndarray:
@@ -32,7 +35,13 @@ def sample_from_cdf(
 class EmpiricalSampler:
     def __init__(self, data: Union[List[Any], np.ndarray]) -> None:
         self.rng = np.random.default_rng(0)
-        self.data, self.cdf = data_to_cdf(np.array(data))
+        self.empty_data = len(data) == 0
+        if self.empty_data:
+            logger.warning("Empty data provided to EmpiricalSampler")
+        else:
+            self.data, self.cdf = data_to_cdf(np.array(data))
 
     def sample(self) -> Any:
+        if self.empty_data:
+            return 0
         return sample_from_cdf(self.data, self.cdf, self.rng)

@@ -8,12 +8,12 @@ from benchmarks.data_utils.synthesizer import Synthesizer
 
 
 # Helper function to create and dump data
-def dump_record(handle, timestamp, hash_ids, block_size=512):
+def dump_record(handle, hash_ids, block_size=512):
     input_length = block_size * len(hash_ids)
     output_length = random.randint(50, 250)
 
     data = {
-        "timestamp": timestamp,
+        "timestamp": 1000,
         "hash_ids": hash_ids,
         "input_length": input_length,
         "output_length": output_length,
@@ -22,30 +22,60 @@ def dump_record(handle, timestamp, hash_ids, block_size=512):
     handle.write("\n")
 
 
+def check_attributes(
+    graph,
+    node,
+    expected_children,
+    expected_visited=None,
+    expected_length=None,
+    expected_to_leaf=None,
+):
+    # Check children
+    actual_children = list(graph.successors(node))
+    assert sorted(actual_children) == sorted(
+        expected_children
+    ), f"Node {node} has children {actual_children}, expected {expected_children}"
+
+    # Check 'visited' attribute if expected
+    if expected_visited is not None:
+        assert (
+            graph.nodes[node].get("visited") == expected_visited
+        ), f"Node {node} has 'visited' value {graph.nodes[node].get('visited')}, expected {expected_visited}"
+
+    # Check 'length' attribute if expected
+    if expected_length is not None:
+        assert (
+            graph.nodes[node].get("length") == expected_length
+        ), f"Node {node} has 'length' value {graph.nodes[node].get('length')}, expected {expected_length}"
+
+    # Check 'to_leaf' attribute if expected
+    if expected_to_leaf is not None:
+        assert (
+            graph.nodes[node].get("to_leaf") == expected_to_leaf
+        ), f"Node {node} has 'to_leaf' value {graph.nodes[node].get('to_leaf')}, expected {expected_to_leaf}"
+
+    return True
+
+
 def test_graph_structure():
     # Create a temporary JSONL file with the specified data
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as tmp:
-        dump_record(tmp, 1000, [0, 1, 2, 3, 4])
-        dump_record(tmp, 2000, [0, 1, 2])
+        dump_record(tmp, [0, 1])
+        dump_record(tmp, [0, 1, 2, 3, 4])
+        dump_record(tmp, [0, 1, 2, 3, 4, 5, 6])
+        dump_record(tmp, [7, 8])
+        dump_record(tmp, [7, 8, 9, 10])
+        dump_record(tmp, [11, 12])
 
     # Create the Synthesizer with the temporary file
     synthesizer = Synthesizer(tmp.name, block_size=512)
-
+    G = synthesizer.G
+    
     # Verify the graph structure
-    # Check that the root node (-1) has only one child
-    root_successors = list(synthesizer.G.successors(-1))
-    assert len(root_successors) == 1, "Root node should have exactly one child"
-
-    # Verify that the child is node 2 with length 3
-    assert (
-        root_successors[0] == 2
-    ), f"Root's child should be node 2, but is {root_successors[0]}"
-    assert synthesizer.G.nodes[2]["length"] == 3, "Node 2 should have length 3"
-
-    # Verify the edge weight from root to child is 2
-    assert (
-        synthesizer.G[-1][2]["weight"] == 2
-    ), "Edge weight from root to node 2 should be 2"
+    check_attributes(G, -1, [1, 8], 6, None, 1)
+    check_attributes(G, 1, [4], 3, 2, 0)
+    check_attributes(G, 4, [], 2, 3, 1)
+    check_attributes(G, 8, [], 2, 2, 1)
 
     # Clean up
     os.unlink(tmp.name)
