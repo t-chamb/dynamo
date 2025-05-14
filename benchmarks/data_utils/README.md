@@ -1,4 +1,4 @@
-This directory is currently used for generate synthetic data based on the mooncake dataset, but should be easily extendible to any request datasets with (prefix) hash ids.
+This directory is currently used for generate synthetic data based on the mooncake dataset, but should be easily extendible to any request datasets with (prefix) hash ids, with a current cavaet. The synthesizer is designed to work for jsonl files in the "mooncake" trace file format, meaning that the input are increasing integers of block hashes. For now, new block hashes must be the next consecutive integer, otherwise will not work.
 
 ## Quickstart
 
@@ -12,9 +12,6 @@ python -m benchmark.data_synth.synthesizer \
 --prompt-len-multiplier 0.1
 ```
 where `num-requests` sets the number of total synthetic requests generated, `speedup-ratio` tunes the rate at which the requests are sent, `depth-multiplier` tunes the lengths of the request prefixes (higher multiplier will then yield longer ISLs), and `width-multiplier` controls the branching factor of the synthetic requests (higher multiplier will generate more diverse request patterns).
-
-
-The synthesizer is designed to work for jsonl files in the "mooncake" trace file format, meaning that the input are increasing integers of block hashes. For now, new block hashes must be the next consecutive integer, otherwise will not work.
 
 ## How it works
 

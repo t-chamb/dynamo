@@ -33,7 +33,7 @@ def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:
         for node in chain_nodes:
             node_pred = list(G.predecessors(node))[0]
             # find the parent node source
-            if G.nodes[node_pred]["visited"] == visited:
+            if G.nodes[node_pred]["visited"] == visited and node_pred != -1:
                 continue
             weight = G[node_pred][node]["weight"]
 

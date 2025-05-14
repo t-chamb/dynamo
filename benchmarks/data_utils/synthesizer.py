@@ -4,6 +4,7 @@ from collections import Counter
 import networkx as nx
 import numpy as np
 import pandas as pd
+from typing import Optional
 
 from benchmarks.utils.logging import calculate_and_print_statistics
 from benchmarks.data_utils.graph_utils import (
@@ -116,16 +117,15 @@ class Synthesizer:
         self.G.nodes[-1]["visited"] = num_paths
         self.max_hash_id = max_hash_id
 
-        nodes_with_multiple_parents = [
-            (node, d) for node, d in self.G.in_degree() if d > 1
-        ]
-        if nodes_with_multiple_parents:
-            print("WARNING: The following nodes have multiple parents (in-degree > 1):")
-            for node, in_degree in nodes_with_multiple_parents:
+        invalid_nodes = [(node, d) for node, d in self.G.in_degree() if d > 1]
+        if invalid_nodes:
+            print("ERROR: The following nodes have multiple parents (in-degree > 1):")
+            for node, in_degree in invalid_nodes:
                 parents = list(self.G.predecessors(node))
                 print(f"  Node {node}: in-degree={in_degree}, parents={parents}")
-
-        assert all(d <= 1 for _, d in self.G.in_degree()), "Graph is not a tree"
+            raise ValueError(
+                "Graph is not a valid tree: nodes with multiple parents detected"
+            )
 
         # visits to leaf nodes (non-core branches) are considered as ended
         for node in self.G.nodes():
@@ -168,9 +168,7 @@ class Synthesizer:
         self.input_lens_mod_sampler = EmpiricalSampler(input_lens_mod)
         self.output_lens_sampler = EmpiricalSampler(output_lens)
 
-        print(self)
-
-    def _relabel_nodes(self):
+    def _relabel_nodes(self) -> None:
         # Scale node labels by length multiplier if needed
         if self.context_len_multiplier > 1:
             multiplier = int(np.ceil(self.context_len_multiplier))
@@ -191,7 +189,7 @@ class Synthesizer:
                     round(self.G.nodes[node]["length"] * self.context_len_multiplier), 1
                 )
 
-    def _synthesize_leaf_path(self):
+    def _synthesize_leaf_path(self) -> list[int]:
         # Sample the leaf path length
         leaf_length = self.leaves_lens_sampler.sample()
 
@@ -203,7 +201,7 @@ class Synthesizer:
 
         return path
 
-    def synthesize_path(self):
+    def synthesize_path(self) -> tuple[list[int], bool, int]:
         # Start from root node (-1)
         current_node = -1
         path = []
@@ -241,7 +239,9 @@ class Synthesizer:
         # Append a leaf path at the end
         return path + unique_user_prompt, True, context_len
 
-    def synthesize_requests(self, num_requests, input_len_filter=None):
+    def synthesize_requests(
+        self, num_requests: int, input_len_filter: Optional[int] = None
+    ) -> list[dict[str, any]]:
         timestamp = 0
 
         requests = []
@@ -290,7 +290,7 @@ class Synthesizer:
 
         return requests
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         path_lengths = nx.single_source_shortest_path_length(self.G, -1)
         core_radix_tree_size = len(self.G) - 1
         core_radix_tree_depth = max(path_lengths.values()) if path_lengths else 0
