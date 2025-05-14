@@ -4,7 +4,7 @@ import random
 import tempfile
 import unittest
 
-from benchmark.data_synth.synthesizer import Synthesizer
+from benchmarks.data_synth.synthesizer import Synthesizer
 
 
 # Helper function to create and dump data
@@ -33,6 +33,8 @@ class TestSynthesizer(unittest.TestCase):
 
         # Create the Synthesizer with the temporary file
         synthesizer = Synthesizer(tmp.name, block_size=512)
+        
+        print(synthesizer)
 
         # Verify the graph structure
         # Check that the root node (-1) has only one child

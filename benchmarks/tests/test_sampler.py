@@ -1,7 +1,7 @@
 import numpy as np
 from collections import Counter
 
-from benchmark.data_synth.sampler import EmpiricalSampler
+from benchmarks.data_synth.sampler import EmpiricalSampler
 
 
 def test_empirical_sampler_distribution():

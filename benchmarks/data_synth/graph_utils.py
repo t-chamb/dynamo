@@ -1,7 +1,7 @@
 import numpy as np
 import networkx as nx
 
-from benchmark.data_synth.sampler import get_cdf
+from benchmarks.data_synth.sampler import get_cdf
 
 
 def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:

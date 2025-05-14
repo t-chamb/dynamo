@@ -5,13 +5,13 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from benchmark.utils.logging import calculate_and_print_statistics
-from benchmark.data_synth.graph_utils import (
+from benchmarks.utils.logging import calculate_and_print_statistics
+from benchmarks.data_synth.graph_utils import (
     _merge_chains,
     _precompute_transition_cdfs,
     _remove_leaves,
 )
-from benchmark.data_synth.sampler import EmpiricalSampler, sample_from_cdf
+from benchmarks.data_synth.sampler import EmpiricalSampler, sample_from_cdf
 
 
 class Synthesizer:
