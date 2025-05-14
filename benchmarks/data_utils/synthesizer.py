@@ -6,12 +6,12 @@ import numpy as np
 import pandas as pd
 
 from benchmarks.utils.logging import calculate_and_print_statistics
-from benchmarks.data_synth.graph_utils import (
+from benchmarks.data_utils.graph_utils import (
     _merge_chains,
     _precompute_transition_cdfs,
     _remove_leaves,
 )
-from benchmarks.data_synth.sampler import EmpiricalSampler, sample_from_cdf
+from benchmarks.data_utils.sampler import EmpiricalSampler, sample_from_cdf
 
 
 class Synthesizer:
