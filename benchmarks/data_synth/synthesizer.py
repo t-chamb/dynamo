@@ -292,10 +292,11 @@ class Synthesizer:
 
     def __repr__(self):
         path_lengths = nx.single_source_shortest_path_length(self.G, -1)
+        core_radix_tree_size = len(self.G) - 1
         core_radix_tree_depth = max(path_lengths.values()) if path_lengths else 0
 
         rep = "MooncakeSynth("
-        rep += f"core_radix_tree_size={len(self.G)}, "
+        rep += f"core_radix_tree_size={core_radix_tree_size}, "
         rep += f"core_radix_tree_depth={core_radix_tree_depth}, "
         rep += f"block_size={self.block_size})"
 
