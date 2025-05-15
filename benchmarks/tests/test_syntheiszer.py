@@ -70,7 +70,7 @@ def test_graph_structure():
     # Create the Synthesizer with the temporary file
     synthesizer = Synthesizer(tmp.name, block_size=512)
     G = synthesizer.G
-    
+
     # Verify the graph structure
     check_attributes(G, -1, [1, 8], 6, None, 1)
     check_attributes(G, 1, [4], 3, 2, 0)

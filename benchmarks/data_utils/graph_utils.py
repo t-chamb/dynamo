@@ -2,6 +2,7 @@ import numpy as np
 import networkx as nx
 
 from benchmarks.data_utils.sampler import get_cdf
+from benchmarks.data_utils.protocols import SUPER_ROOT, CACHE_END, END_NODE
 
 
 def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:
@@ -33,7 +34,7 @@ def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:
         for node in chain_nodes:
             node_pred = list(G.predecessors(node))[0]
             # find the parent node source
-            if G.nodes[node_pred]["visited"] == visited and node_pred != -1:
+            if G.nodes[node_pred]["visited"] == visited and node_pred != SUPER_ROOT:
                 continue
             weight = G[node_pred][node]["weight"]
 
@@ -80,7 +81,10 @@ def _precompute_transition_cdfs(G: nx.DiGraph) -> nx.DiGraph:
             G.nodes[node]["end"],
         ]
         G.nodes[node]["out_cdf"] = get_cdf(weights)
-        G.nodes[node]["out_nodes"] = [edge[1] for edge in out_edges] + [-2, -3]
+        G.nodes[node]["out_nodes"] = [edge[1] for edge in out_edges] + [
+            CACHE_END,
+            END_NODE,
+        ]
 
     return G
 

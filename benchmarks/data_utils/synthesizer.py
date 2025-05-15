@@ -13,6 +13,7 @@ from benchmarks.data_utils.graph_utils import (
     _remove_leaves,
 )
 from benchmarks.data_utils.sampler import EmpiricalSampler, sample_from_cdf
+from benchmarks.data_utils.protocols import SUPER_ROOT, CACHE_END, END_NODE
 
 
 class Synthesizer:
@@ -66,7 +67,7 @@ class Synthesizer:
         # assert correct arg bounds
         assert (
             isinstance(self.num_copies, int) and self.num_copies >= 1
-        ), "num_copies must be an integer greater than 1"
+        ), "num_copies must be an integer greater than or equal to 1"
         assert (
             isinstance(self.speedup_ratio, float) and self.speedup_ratio > 0
         ), "speedup_ratio must be a positive float"
@@ -81,24 +82,27 @@ class Synthesizer:
 
         # extract data from json file
         with open(dataset_file, "r") as f:
-            hash_ids_list = [np.array(json.loads(line)["hash_ids"]) for line in f]
-        with open(dataset_file, "r") as f:
-            timestamps = [int(json.loads(line)["timestamp"]) for line in f]
-        with open(dataset_file, "r") as f:
-            input_lens = [np.array(json.loads(line)["input_length"]) for line in f]
-        with open(dataset_file, "r") as f:
-            output_lens = [int(json.loads(line)["output_length"]) for line in f]
+            hash_ids_list = []
+            timestamps = []
+            input_lens = []
+            output_lens = []
+            for line in f:
+                data = json.loads(line)
+                hash_ids_list.append(np.array(data["hash_ids"]))
+                timestamps.append(int(data["timestamp"]))
+                input_lens.append(np.array(data["input_length"]))
+                output_lens.append(int(data["output_length"]))
 
         # represent prefix-tree as directed graph
         self.G = nx.DiGraph()
-        max_hash_id = -1
+        max_hash_id = SUPER_ROOT
         num_paths = 0
 
         self.G.add_node(-1, end=0)
         for hash_ids in hash_ids_list:
             num_paths += 1
             for i in range(len(hash_ids)):
-                u = hash_ids[i - 1] if i > 0 else -1
+                u = hash_ids[i - 1] if i > 0 else SUPER_ROOT
                 v = hash_ids[i]
                 max_hash_id = max(v, max_hash_id)
 
@@ -114,7 +118,7 @@ class Synthesizer:
 
             self.G.nodes[v]["end"] += 1
 
-        self.G.nodes[-1]["visited"] = num_paths
+        self.G.nodes[SUPER_ROOT]["visited"] = num_paths
         self.max_hash_id = max_hash_id
 
         invalid_nodes = [(node, d) for node, d in self.G.in_degree() if d > 1]
@@ -202,8 +206,18 @@ class Synthesizer:
         return path
 
     def synthesize_path(self) -> tuple[list[int], bool, int]:
+        """
+        Synthesizes a path through the core radix tree, optionally appending a unique user prompt (leaf path).
+
+        Returns:
+            tuple:
+                - list[int]: The full path as a list of hash_ids. This consists of the cached (core) hash_ids,
+                  with new unique hash_ids appended at the end if a leaf path is included.
+                - bool: Whether the path contains a leaf path (i.e., new unique hash_ids were appended).
+                - int: The context length, defined as the number of cached hash_ids multiplied by block_size.
+        """
         # Start from root node (-1)
-        current_node = -1
+        current_node = SUPER_ROOT
         path = []
         context_len = 0
 
@@ -217,10 +231,10 @@ class Synthesizer:
 
             # end early
             # break and start sampling unique user prompt
-            if next_node == -2:
+            if next_node == CACHE_END:
                 break
             # break and don't sample leaf
-            if next_node == -3:
+            if next_node == END_NODE:
                 return path, False, 0
 
             # otherwise continue down prefix tree
@@ -301,7 +315,6 @@ class Synthesizer:
         rep += f"block_size={self.block_size})"
 
         children = list(self.G.successors(-1))
-
         data = {
             "Child Node": children,
             "Visited Count": [self.G.nodes[child]["visited"] for child in children],
@@ -312,16 +325,10 @@ class Synthesizer:
         df = df.sort_values("Visited Count", ascending=False)
         grouped = df.groupby("Length", sort=True)
 
-        rep += "\nRoot children (grouped by length, visited count ≥ 5):\n"
-        # Print each group in a minimal format - just length and visit counts
+        rep += "\nRoot nodes (grouped by length, visited count ≥ 5):\n"
         for length, group in grouped:
-            # Get top 5 nodes by visited count
             top_nodes = group.head(5)
-
-            # Extract just the visit counts
             visit_counts = top_nodes["Visited Count"].tolist()
-
-            # Format as a single line with just length and visit counts
             rep += f"\nLength: {length}, Visited Counts: {visit_counts}"
 
         return rep
