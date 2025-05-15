@@ -491,8 +491,6 @@ THE SOFTWARE.
    limitations under the License.
    ```
 
-
-
 ## pydantic - [MIT License](https://github.com/pydantic/pydantic/blob/main/LICENSE)
 
    ```
