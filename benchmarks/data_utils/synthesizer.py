@@ -15,20 +15,20 @@
 
 import json
 from collections import Counter
+from typing import Any, Optional
 
 import networkx as nx
 import numpy as np
 import pandas as pd
-from typing import Optional
 
-from benchmarks.utils.logging import calculate_and_print_statistics
 from benchmarks.data_utils.graph_utils import (
     _merge_chains,
     _precompute_transition_cdfs,
     _remove_leaves,
 )
+from benchmarks.data_utils.protocols import CACHE_END, END_NODE, SUPER_ROOT
 from benchmarks.data_utils.sampler import EmpiricalSampler, sample_from_cdf
-from benchmarks.data_utils.protocols import SUPER_ROOT, CACHE_END, END_NODE
+from benchmarks.utils.logging import calculate_and_print_statistics
 
 
 class Synthesizer:
@@ -250,7 +250,7 @@ class Synthesizer:
                 break
             # break and don't sample leaf
             if next_node == END_NODE:
-                return path, False, 0
+                return path, False, context_len
 
             # otherwise continue down prefix tree
 
@@ -270,7 +270,7 @@ class Synthesizer:
 
     def synthesize_requests(
         self, num_requests: int, input_len_filter: Optional[int] = None
-    ) -> list[dict[str, any]]:
+    ) -> list[dict[str, Any]]:
         timestamp = 0
 
         requests = []
@@ -342,9 +342,9 @@ class Synthesizer:
 
         rep += "\nRoot nodes (grouped by length, visited count ≥ 5):\n"
         for length, group in grouped:
-            top_nodes = group.head(5)
-            visit_counts = top_nodes["Visited Count"].tolist()
-            rep += f"\nLength: {length}, Visited Counts: {visit_counts}"
+            nodes = group["Child Node"].tolist()
+            visit_counts = group["Visited Count"].tolist()
+            rep += f"\nNodes: {nodes}, Path Length: {length}, Visited Counts: {visit_counts}"
 
         return rep
 
@@ -356,7 +356,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Synthesize Mooncake-Esque dataset")
     parser.add_argument(
         "--input-file",
-        default="../datasets/mooncake_trace.jsonl",
+        default="mooncake_trace.jsonl",
         type=str,
         help="Path to the input CSV file",
     )
@@ -413,7 +413,10 @@ if __name__ == "__main__":
     dataset_file = Path(args.input_file).resolve()
     if args.output_file is None:
         output_file = dataset_file.with_stem(
-            f"{dataset_file.stem}_synthesized_{int(args.depth_multiplier)}x{args.width_multiplier}+{args.prompt_len_multiplier}+{args.speedup_ratio}+{args.max_isl}"
+            f"{dataset_file.stem}_synth"
+            + f"_{int(args.depth_multiplier)}x{args.width_multiplier}+{args.prompt_len_multiplier}"
+            + f"_speedup{args.speedup_ratio}"
+            + f"_maxisl{args.max_isl}"
         )
     else:
         output_file = Path(args.output_file).resolve()
@@ -437,10 +440,10 @@ if __name__ == "__main__":
 
     # Extract all values first
     metrics = {
-        "ISL": [req["input_length"] for req in requests],
+        "Input Length": [req["input_length"] for req in requests],
         "Context Length": [req["context_len"] for req in requests],
         "Unique Prompt Length": [req["unique_user_prompt_len"] for req in requests],
-        "OSL": [req["output_length"] for req in requests],
+        "Output Length": [req["output_length"] for req in requests],
     }
 
     # Initialize lists to store the data

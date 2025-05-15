@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+<!-- # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,24 +11,54 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.
+# limitations under the License. -->
 
-This directory is currently used for generate synthetic data based on the mooncake dataset, but should be easily extendible to any request datasets with (prefix) hash ids, with a current cavaet. The synthesizer is designed to work for jsonl files in the "mooncake" trace file format, meaning that the input are increasing integers of block hashes. For now, new block hashes must be the next consecutive integer, otherwise will not work.
+## Prefix Analyzer
 
-## Quickstart
+The Prefix Analyzer provides statistics on the original trace file, such as Input Sequence Length (ISL), Output Sequence Length (OSL), and theoretical cache hit rate.
+It is useful for understanding the structure and reuse patterns in your dataset.
 
-For instance, you can run from the project root:
+```bash
+python -m benchmarks.data_utils.prefix_analyzer --input-file <path_to_trace.jsonl> --block-size <block_size>
 ```
-python -m benchmark.data_synth.synthesizer \
---input-file mooncake_trace.jsonl \
---num-requests 500 \
---depth-multiplier 4 \
---width-multiplier 4 \
---prompt-len-multiplier 0.1
-```
-where `num-requests` sets the number of total synthetic requests generated, `speedup-ratio` tunes the rate at which the requests are sent, `depth-multiplier` tunes the lengths of the request prefixes (higher multiplier will then yield longer ISLs), and `width-multiplier` controls the branching factor of the synthetic requests (higher multiplier will generate more diverse request patterns).
 
-## How it works
+- `--input-file`: Path to your trace file in jsonl format (default: `mooncake_trace.jsonl`)
+- `--block-size`: Block size for prefix calculation (default: 512)
+
+---
+
+The script will print out summary statistics for ISL, OSL, user prompt lengths, and the theoretical cache hit rate (assuming an infinite cache).
+
+## Synthesizer
+
+The Synthesizer goes a step further:
+It builds a prefix tree from the original trace file, extracts prefix statistics, and generates a new synthetic dataset based on these statistics.
+You can control various aspects of the synthetic data generation with tunable knobs, such as request rate, context/prompt length multipliers, and the number of tree copies.
+
+This is useful for generating large, realistic synthetic traces for benchmarking or simulation, while preserving the structural properties of the original dataset.
+
+### How to run
+
+```bash
+python -m benchmarks.data_utils.synthesizer --input-file <path_to_trace.jsonl> --num-requests <N> [other options...]
+```
+
+**Options:**
+- `--input-file`: Path to the input trace file (default: `mooncake_trace.jsonl`)
+- `--num-requests`: Number of requests to synthesize (default: 100000)
+- `--speedup-ratio`: Factor to speed up request intervals (default: 1)
+- `--depth-multiplier`: Multiplier for prefix lengths (default: 1.0)
+- `--width-multiplier`: Number of times to replicate the core radix tree (default: 1)
+- `--prompt-len-multiplier`: Multiplier for leaf path lengths (default: 1.0, use <1 for shorter prompts)
+- `--max-isl`: Maximum input sequence length to include in output (default: None, no filtering)
+- `--block-size`: Block size for prefilling and decoding (default: 512)
+- `--output-file`: Path to the output file (default: auto-generated from input file and options)
+
+---
+
+This directory is currently used for generating synthetic data based on the mooncake dataset, but should be easily extendible to any request datasets with (prefix) hash ids, with a current caveat. The synthesizer is designed to work for jsonl files in the "mooncake" trace file format, meaning that the input are increasing integers of block hashes. For now, new block hashes must be the next consecutive integer, otherwise will not work.
+
+### How it works
 
 The generation algorithm, simplified, is as follows
 
@@ -40,8 +70,15 @@ The generation algorithm, simplified, is as follows
 
 ## Testing
 
-To test for "correctness", or faithfulness to the original mooncake statistics, one can run
+To test for "correctness", or faithfulness to the original trace statistics, one can run
 ```
-python mooncake_synth.py --num-requests 500000
+python -m benchmarks.data_utils.synthesizer \
+--input-file mooncake_trace.jsonl \
+--num-requests 500000 \
 ```
-and compare the synthetic ISL statistics (mean, median, std) to the original ISL statistics. I find this to be the most "robust" end-to-end test.
+and compare the synthetic ISL statistics (mean, median, std) to the original ISL statistics, which one can obtain by running
+```
+python -m benchmarks.data_utils.prefix_analyzer \
+--input-file mooncake_trace.jsonl \
+```
+I find this to be the most "robust" end-to-end test. It is important to sample a large number of requests (e.g., hundreds of thousands) to ensure the statistics are meaningful, due to the law of large numbers. In particular, the mean statistics (such as mean ISL) should be well preserved in the synthetic data. However, the standard deviation statistics—especially for ISL—are not expected to match exactly, since the synthesizer does not capture the correlation between context length and prompt length present in the original data.
