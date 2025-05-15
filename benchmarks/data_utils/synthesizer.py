@@ -233,7 +233,7 @@ class Synthesizer:
         """
         # Start from root node (-1)
         current_node = SUPER_ROOT
-        path = []
+        path: list[int] = []
         context_len = 0
 
         # Continue until we reach a node with no outgoing edges
@@ -273,7 +273,7 @@ class Synthesizer:
     ) -> list[dict[str, Any]]:
         timestamp = 0
 
-        requests = []
+        requests: list[dict[str, Any]] = []
         request_id = 0
 
         while request_id < num_requests:
@@ -423,7 +423,7 @@ if __name__ == "__main__":
 
     print("learning from dataset...", flush=True)
     synthesizer = Synthesizer(
-        dataset_file,
+        str(dataset_file),
         block_size=args.block_size,
         speedup_ratio=args.speedup_ratio,
         context_len_multiplier=args.depth_multiplier,
@@ -445,10 +445,6 @@ if __name__ == "__main__":
         "Unique Prompt Length": [req["unique_user_prompt_len"] for req in requests],
         "Output Length": [req["output_length"] for req in requests],
     }
-
-    # Initialize lists to store the data
-    metric_names = []
-    stats_data = []
 
     # Calculate statistics for each metric
     calculate_and_print_statistics(metrics)
