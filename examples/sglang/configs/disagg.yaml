@@ -12,39 +12,34 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-Common:
-  model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
-  block-size: 64
-  max-model-len: 16384
-  kv-transfer-config: '{"kv_connector":"DynamoNixlConnector"}'
-
 Frontend:
   served_model_name: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
-  endpoint: dynamo.Processor.chat/completions
+  endpoint: dynamo.SGLangWorker.generate
   port: 8000
 
-Processor:
-  router: kv-load
-  common-configs: [model, block-size]
-
-VllmWorker:
-  remote-prefill: true
-  conditional-disagg: false
+# We set disaggregation-bootstrap-port in utils/sglang.py to ensure unique ports for each replica
+SGLangWorker:
+  model-path: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  served-model-name: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  tp: 1
+  trust-remote-code: true
+  skip-tokenizer-init: true
+  disaggregation-mode: prefill
+  disaggregation-transfer-backend: nixl
   ServiceArgs:
-    workers: 2
+    workers: 1
     resources:
       gpu: 1
-  common-configs: [model, block-size, max-model-len, kv-transfer-config]
 
-PrefillWorker:
-  max-num-batched-tokens: 16384
+SGLangDecodeWorker:
+  model-path: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  served-model-name: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  tp: 1
+  trust-remote-code: true
+  skip-tokenizer-init: true
+  disaggregation-mode: decode
+  disaggregation-transfer-backend: nixl
   ServiceArgs:
-    workers: 2
+    workers: 1
     resources:
       gpu: 1
-  common-configs: [model, block-size, max-model-len, kv-transfer-config]
-
-Planner:
-  environment: local
-  no-operation: true
-  log-dir: log/2p2d
