@@ -58,6 +58,8 @@ python -m benchmarks.data_utils.synthesizer --input-file <path_to_trace.jsonl> -
 
 This directory is currently used for generating synthetic data based on the mooncake dataset, but should be easily extendible to any request datasets with (prefix) hash ids, with a current caveat. The synthesizer is designed to work for jsonl files in the "mooncake" trace file format, meaning that the input are increasing integers of block hashes. For now, new block hashes must be the next consecutive integer, otherwise will not work.
 
+If you want to generate these increasing hash ids from a list of texts, you can use the `texts_to_hashes` function in `hasher.py`.
+
 ### How it works
 
 The generation algorithm, simplified, is as follows
