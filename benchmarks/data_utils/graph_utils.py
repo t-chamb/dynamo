@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 import networkx as nx
+import numpy as np
 
+from benchmarks.data_utils.protocols import CACHE_END, END_NODE, SUPER_ROOT
 from benchmarks.data_utils.sampler import get_cdf
-from benchmarks.data_utils.protocols import SUPER_ROOT, CACHE_END, END_NODE
 
 
 def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:
