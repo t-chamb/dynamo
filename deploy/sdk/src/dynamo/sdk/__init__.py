@@ -13,16 +13,16 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-# from typing import Any
+from typing import Any
 
 from bentoml import on_shutdown as async_on_shutdown
 
 from dynamo.sdk.core.decorators.endpoint import dynamo_api, dynamo_endpoint, abstract_dynamo_endpoint
-from dynamo.sdk.core.protocol.interface import AbstractDynamoService
 from dynamo.sdk.core.lib import DYNAMO_IMAGE, depends, service
 from dynamo.sdk.lib.decorators import async_on_start
+from dynamo.sdk.core.protocol.interface import AbstractDynamoService
 
-dynamo_context = {}
+dynamo_context: dict[str, Any] = {}
 
 __all__ = [
     "DYNAMO_IMAGE",
@@ -33,6 +33,6 @@ __all__ = [
     "dynamo_endpoint",
     "dynamo_api",
     "service",
-    "abstract_dynamo_endpoint",
     "AbstractDynamoService",
+    "abstract_dynamo_endpoint",
 ]

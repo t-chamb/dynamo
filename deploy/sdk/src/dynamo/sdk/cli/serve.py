@@ -148,7 +148,6 @@ def serve(
     logger.info(f"Loaded service: {svc.name}")
     logger.debug("Dependencies: %s", [dep.on.name for dep in svc.dependencies.values()])
     LinkedServices.remove_unused_edges()
-    logger.info("Dependencies: %s", [dep.on.name for dep in svc.dependencies.values()])
 
     # Check if local planner is enabled
     enable_local_planner = is_local_planner_enabled(svc, service_configs)

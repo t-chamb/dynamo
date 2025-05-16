@@ -243,7 +243,6 @@ def serve_dynamo_graph(
                         env=env,
                         target=target,
                     )
-                    namespace, _ = dep_svc.dynamo_address()
                     watchers.append(new_watcher)
                     sockets.append(new_socket)
                     dependency_map[name] = uri

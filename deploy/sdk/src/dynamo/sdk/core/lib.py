@@ -26,6 +26,7 @@ from dynamo.sdk.core.protocol.interface import (
     ServiceConfig,
     ServiceInterface,
     AbstractDynamoService,
+    validate_dynamo_interfaces,
 )
 from dynamo.sdk.core.decorators.endpoint import DynamoEndpoint
 
@@ -38,70 +39,6 @@ _target: DeploymentTarget
 # Add global cache for abstract services
 _abstract_service_cache: Dict[Type[AbstractDynamoService], ServiceInterface[Any]] = {}
 
-
-# Helper functions for interface validation (ported from lib/service.py)
-def _is_dynamo(func: Any) -> bool:
-    """True if the function is a DynamoEndpoint instance."""
-    return isinstance(func, DynamoEndpoint)
-
-
-def _get_abstract_dynamo_endpoints(cls: type) -> Set[str]:
-    """Get all abstract endpoint names from the class's MRO."""
-    return {
-        name
-        for base in cls.mro()
-        for name, val in base.__dict__.items()
-        if getattr(val, "__is_abstract_dynamo__", False)
-    }
-
-
-def _check_dynamo_endpoint_implemented(cls: type, name: str) -> bool:
-    """Check if an endpoint is properly implemented."""
-    impl = getattr(cls, name, None)
-    return impl is not None and _is_dynamo(impl)
-
-
-def _validate_dynamo_interfaces(cls: type) -> None:
-    """
-    Validate that *cls* fully implements every @abstract_dynamo_endpoint
-    declared in its ancestors and that each implementation is
-    decorated with @dynamo_endpoint.
-    """
-    required = _get_abstract_dynamo_endpoints(cls)
-
-    missing: List[str] = []
-    undecorated: List[str] = []
-    not_callable: List[Tuple[str, str]] = []
-
-    for name in required:
-        impl = getattr(cls, name, None)
-        if impl is None:
-            missing.append(name)
-            continue
-
-        if not callable(impl):
-            not_callable.append((name, type(impl).__name__))
-            continue
-
-        if not _is_dynamo(impl):
-            undecorated.append(name)
-
-    problems = []
-    if missing:
-        problems.append(f"missing implementation(s): {', '.join(missing)}")
-    if undecorated:
-        problems.append(
-            f"method(s) not decorated with @dynamo_endpoint: {', '.join(undecorated)}"
-        )
-    if not_callable:
-        problems.append(
-            ", ".join(f"{n} must be callable, got {kind}" for n, kind in not_callable)
-        )
-
-    if problems:
-        raise TypeError(
-            f"{cls.__name__} violates Dynamo interface — " + "; ".join(problems)
-        )
 
 
 DYNAMO_IMAGE = os.getenv("DYNAMO_IMAGE", "dynamo:latest-vllm")

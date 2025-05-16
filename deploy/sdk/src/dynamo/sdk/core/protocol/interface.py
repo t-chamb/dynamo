@@ -226,24 +226,19 @@ class ServiceInterface(Generic[T], ABC):
             return True
 
         # For AbstractDynamoService, check implementations
-        abstract_endpoints = _get_abstract_dynamo_endpoints_for_servable(self.inner)
+        abstract_endpoints = _get_abstract_dynamo_endpoints(self.inner)
         if not abstract_endpoints: # No abstract endpoints to implement, so it's servable
             return True
         return all(
-            _check_dynamo_endpoint_implemented_for_servable(self.inner, name)
+            _check_dynamo_endpoint_implemented(self.inner, name)
             for name in abstract_endpoints
         )
 
 
-# Helper functions for is_servable (adapted from lib/service.py and core/lib.py)
-# Renamed to avoid potential conflicts if these files are merged later.
-def _is_dynamo_ep_for_servable(func: Any) -> bool:
-    """True if the function is a DynamoEndpoint instance."""
-    return isinstance(func, DynamoEndpoint)
 
 
-def _get_abstract_dynamo_endpoints_for_servable(cls: type) -> Set[str]:
-    """Get all abstract endpoint names from the class's MRO for servable check."""
+def _get_abstract_dynamo_endpoints(cls: type) -> Set[str]:
+    """Get all abstract endpoint names from the class's MRO."""
     return {
         name
         for base in cls.mro()
@@ -252,11 +247,54 @@ def _get_abstract_dynamo_endpoints_for_servable(cls: type) -> Set[str]:
     }
 
 
-def _check_dynamo_endpoint_implemented_for_servable(cls: type, name: str) -> bool:
-    """Check if an endpoint is properly implemented for servable check."""
+def _check_dynamo_endpoint_implemented(cls: type, name: str) -> bool:
+    """Check if an endpoint is properly implemented."""
     impl = getattr(cls, name, None)
     # Ensure the implementation is a callable DynamoEndpoint
-    return impl is not None and callable(impl) and _is_dynamo_ep_for_servable(impl)
+    return impl and callable(impl) and isinstance(impl, DynamoEndpoint)
+
+
+def validate_dynamo_interfaces(cls: type) -> None:
+    """
+    Validate that *cls* fully implements every @abstract_dynamo_endpoint
+    declared in its ancestors and that each implementation is
+    decorated with @dynamo_endpoint.
+    """
+    required = _get_abstract_dynamo_endpoints(cls)
+
+    missing: List[str] = []
+    undecorated: List[str] = []
+    not_callable: List[Tuple[str, str]] = []
+
+    for name in required:
+        impl = getattr(cls, name, None)
+        if impl is None:
+            missing.append(name)
+            continue
+
+        if not callable(impl):
+            not_callable.append((name, type(impl).__name__))
+            continue
+
+        if not isinstance(impl, DynamoEndpoint):
+            undecorated.append(name)
+
+    problems = []
+    if missing:
+        problems.append(f"missing implementation(s): {', '.join(missing)}")
+    if undecorated:
+        problems.append(
+            f"method(s) not decorated with @dynamo_endpoint: {', '.join(undecorated)}"
+        )
+    if not_callable:
+        problems.append(
+            ", ".join(f"{n} must be callable, got {kind}" for n, kind in not_callable)
+        )
+
+    if problems:
+        raise TypeError(
+            f"{cls.__name__} violates Dynamo interface — " + "; ".join(problems)
+        )
 
 
 @dataclass
