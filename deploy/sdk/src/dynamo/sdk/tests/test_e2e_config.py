@@ -16,6 +16,7 @@
 import re
 import subprocess
 import time
+from collections import Counter
 
 import pytest
 from typer.testing import CliRunner
@@ -41,8 +42,8 @@ def setup_and_teardown():
             "pipeline:Frontend",
             "--working-dir",
             "deploy/sdk/src/dynamo/sdk/tests",
-            "--Frontend.model=qwentastic",
-            "--Middle.bias=0.5",
+            "-f",
+            "deploy/sdk/src/dynamo/sdk/tests/config.yaml",
             "--dry-run",
         ],
     )
@@ -55,12 +56,12 @@ def setup_and_teardown():
             "pipeline:Frontend",
             "--working-dir",
             "deploy/sdk/src/dynamo/sdk/tests",
-            "--Frontend.model=qwentastic",
-            "--Middle.bias=0.5",
+            "-f",
+            "deploy/sdk/src/dynamo/sdk/tests/config.yaml",
         ]
     )
 
-    time.sleep(5)
+    time.sleep(3)
 
     yield result
 
@@ -75,20 +76,40 @@ def setup_and_teardown():
 
 
 async def test_pipeline(setup_and_teardown):
-    # Check the CLI command ran successfully
-    result = setup_and_teardown
-    assert result.exit_code == 0
-
-    # Clean the output to check for expected content
-    clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
-    assert "Service Configuration:" in clean_output
-    assert '"Frontend": {' in clean_output
-    assert '"model": "qwentastic"' in clean_output
-
     import asyncio
 
     import aiohttp
 
+    # Check the CLI command ran successfully
+    result = setup_and_teardown
+    assert result.exit_code == 0
+
+    import psutil
+
+    # Capture list of subprocesses (children of current process)
+    current_process = psutil.Process()
+    child_processes = list(current_process.children(recursive=True))
+    # Assert their name and command line
+    service_count: Counter[str] = Counter()
+    for proc in child_processes:
+        try:
+            cmd = proc.cmdline()
+            if "--service-name" in " ".join(cmd):
+                idx = cmd.index("--service-name")
+                service_name = cmd[idx + 1]
+                service_count[service_name] += 1
+            # assert "dynamo" in name.lower() or "dynamo" in " ".join(cmdline).lower()
+            # assert any("serve" in arg for arg in cmdline)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    assert service_count["Frontend"] == 1
+    assert service_count["Backend"] == 3
+    assert service_count["Middle"] == 2
+
+    # Clean the output to check for expected content
+    clean_output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "Service Configuration:" in clean_output
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -105,8 +126,8 @@ async def test_pipeline(setup_and_teardown):
                         in text
                     )
                     break
-        except Exception:
+        except Exception as e:
             if attempt == max_retries - 1:
                 raise
-            print(f"Attempt {attempt + 1} failed, retrying...")
+            print(f"Attempt {attempt + 1} failed, retrying... {e}")
             await asyncio.sleep(3)

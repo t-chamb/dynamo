@@ -19,7 +19,7 @@
 
 [package]
 name = "dynamo-py3"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["NVIDIA"]
 license = "Apache-2.0"
@@ -30,8 +30,8 @@ repository = "https://github.com/ai-dynamo/dynamo.git"
 path = "rust/lib.rs"
 name = "_core"
 # "cdylib" is necessary to produce a shared library for Python to import from.
-crate-type = ["cdylib"]
-
+# "rlib" is necessary to support doctests.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 
