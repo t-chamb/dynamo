@@ -12,25 +12,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+Common:
+  model: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+  served_model_name: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
 
 Frontend:
-  message: "earth"
+  endpoint: dynamo.SimpleLoadBalancer.generate_agg
   port: 8000
+  served_model_name: deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+
+SimpleLoadBalancer:
+  enable_disagg: false
+  common-configs: [model, served_model_name]
+
+VllmDecodeWorker:
+  enforce-eager: true
   ServiceArgs:
     workers: 1
     resources:
-      cpu: "1"
-
-Middle:
-  message: "moon"
-  ServiceArgs:
-    workers: 2
-    resources:
-      cpu: "1"
-
-Backend:
-  message: "mars"
-  ServiceArgs:
-    workers: 2
-    resources:
-      cpu: "1"
+      gpu: 1
+  common-configs: [model, served_model_name]

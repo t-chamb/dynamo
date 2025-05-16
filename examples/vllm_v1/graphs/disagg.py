@@ -13,24 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-Frontend:
-  message: "earth"
-  port: 8000
-  ServiceArgs:
-    workers: 1
-    resources:
-      cpu: "1"
+from components.frontend import Frontend
+from components.simple_load_balancer import SimpleLoadBalancer
+from components.worker import VllmDecodeWorker, VllmPrefillWorker
 
-Middle:
-  message: "moon"
-  ServiceArgs:
-    workers: 2
-    resources:
-      cpu: "1"
-
-Backend:
-  message: "mars"
-  ServiceArgs:
-    workers: 2
-    resources:
-      cpu: "1"
+load_balancer = Frontend.link(SimpleLoadBalancer)
+load_balancer.link(VllmPrefillWorker)
+load_balancer.link(VllmDecodeWorker)
