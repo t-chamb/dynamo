@@ -15,7 +15,7 @@
 #  Modifications Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES
 
 import os
-from typing import Any, Dict, Optional, Type, TypeVar, Union
+from typing import Any, Dict, Optional, Type, TypeVar, Union, Set, List, Tuple
 
 from fastapi import FastAPI
 
@@ -25,13 +25,83 @@ from dynamo.sdk.core.protocol.interface import (
     DynamoConfig,
     ServiceConfig,
     ServiceInterface,
+    AbstractDynamoService,
 )
+from dynamo.sdk.core.decorators.endpoint import DynamoEndpoint
 
 T = TypeVar("T", bound=object)
 
 #  Note: global service provider.
 # this should be set to a concrete implementation of the DeploymentTarget interface
 _target: DeploymentTarget
+
+# Add global cache for abstract services
+_abstract_service_cache: Dict[Type[AbstractDynamoService], ServiceInterface[Any]] = {}
+
+
+# Helper functions for interface validation (ported from lib/service.py)
+def _is_dynamo(func: Any) -> bool:
+    """True if the function is a DynamoEndpoint instance."""
+    return isinstance(func, DynamoEndpoint)
+
+
+def _get_abstract_dynamo_endpoints(cls: type) -> Set[str]:
+    """Get all abstract endpoint names from the class's MRO."""
+    return {
+        name
+        for base in cls.mro()
+        for name, val in base.__dict__.items()
+        if getattr(val, "__is_abstract_dynamo__", False)
+    }
+
+
+def _check_dynamo_endpoint_implemented(cls: type, name: str) -> bool:
+    """Check if an endpoint is properly implemented."""
+    impl = getattr(cls, name, None)
+    return impl is not None and _is_dynamo(impl)
+
+
+def _validate_dynamo_interfaces(cls: type) -> None:
+    """
+    Validate that *cls* fully implements every @abstract_dynamo_endpoint
+    declared in its ancestors and that each implementation is
+    decorated with @dynamo_endpoint.
+    """
+    required = _get_abstract_dynamo_endpoints(cls)
+
+    missing: List[str] = []
+    undecorated: List[str] = []
+    not_callable: List[Tuple[str, str]] = []
+
+    for name in required:
+        impl = getattr(cls, name, None)
+        if impl is None:
+            missing.append(name)
+            continue
+
+        if not callable(impl):
+            not_callable.append((name, type(impl).__name__))
+            continue
+
+        if not _is_dynamo(impl):
+            undecorated.append(name)
+
+    problems = []
+    if missing:
+        problems.append(f"missing implementation(s): {', '.join(missing)}")
+    if undecorated:
+        problems.append(
+            f"method(s) not decorated with @dynamo_endpoint: {', '.join(undecorated)}"
+        )
+    if not_callable:
+        problems.append(
+            ", ".join(f"{n} must be callable, got {kind}" for n, kind in not_callable)
+        )
+
+    if problems:
+        raise TypeError(
+            f"{cls.__name__} violates Dynamo interface — " + "; ".join(problems)
+        )
 
 
 DYNAMO_IMAGE = os.getenv("DYNAMO_IMAGE", "dynamo:latest-vllm")
@@ -47,6 +117,33 @@ def get_target() -> DeploymentTarget:
     """Get the current service provider implementation"""
     global _target
     return _target
+
+
+# Helper function to get or create service instance for AbstractDynamoService
+def _get_or_create_abstract_service_instance(
+    abstract_service_cls: Type[AbstractDynamoService], provider: DeploymentTarget
+) -> ServiceInterface[Any]:
+    """
+    Retrieves a service instance from cache or creates a new one
+    for the given AbstractDynamoService class.
+    """
+    global _abstract_service_cache
+    if abstract_service_cls in _abstract_service_cache:
+        return _abstract_service_cache[abstract_service_cls]
+    else:
+        # This placeholder service will be a singleton, and will be used for all dependencies that depend on this abstract service.
+        # The name for DynamoConfig will be the class name of the abstract service.
+        dynamo_config_for_abstract = DynamoConfig(enabled=True)
+
+        # Call the main service() decorator/function to create the service instance
+        service_instance = service(
+            inner=abstract_service_cls,
+            dynamo=dynamo_config_for_abstract
+            # app will be None by default
+            # **kwargs for ServiceConfig will be empty, so ServiceConfig({}) is created inside service()
+        )
+        _abstract_service_cache[abstract_service_cls] = service_instance
+        return service_instance
 
 
 # TODO: dynamo_component
@@ -71,6 +168,9 @@ def service(
     assert isinstance(dynamo_config, DynamoConfig)
 
     def decorator(inner: Type[T]) -> ServiceInterface[T]:
+        # Validate Dynamo interfaces before creating the service
+        _validate_dynamo_interfaces(inner)
+
         provider = get_target()
         if inner is not None:
             dynamo_config.name = inner.__name__
@@ -87,8 +187,28 @@ def service(
 
 
 def depends(
-    on: Optional[ServiceInterface[T]] = None, **kwargs: Any
+    on: Optional[Union[ServiceInterface[T], Type[AbstractDynamoService]]] = None,
+    **kwargs: Any
 ) -> DependencyInterface[T]:
-    """Create a dependency using the current service provider"""
+    """Create a dependency using the current service provider.
+
+    If 'on' is an AbstractDynamoService type, a placeholder service will be
+    created and used for the dependency.
+    """
     provider = get_target()
-    return provider.create_dependency(on=on, **kwargs)
+    actual_on_service: Optional[ServiceInterface[Any]] = None
+
+    if isinstance(on, type) and issubclass(on, AbstractDynamoService):
+        actual_on_service = _get_or_create_abstract_service_instance(on, provider)
+        # The type of actual_on_service here would be ServiceInterface[NameOfAbstractClass]
+        # So, T would be NameOfAbstractClass.
+        return provider.create_dependency(on=actual_on_service, **kwargs)
+    elif isinstance(on, ServiceInterface):
+        # This handles both 'on=None' and 'on=SomeServiceInterfaceInstance'
+        # If 'on' is ServiceInterface[K], T could be K. If 'on' is None, T remains unbound here.
+        actual_on_service = on
+        return provider.create_dependency(on=actual_on_service, **kwargs)
+    else:
+        raise TypeError(
+            "depends() expects 'on' to be a ServiceInterface, an AbstractDynamoService type"
+        )

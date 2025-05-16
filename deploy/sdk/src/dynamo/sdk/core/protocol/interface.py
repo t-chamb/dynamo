@@ -22,6 +22,9 @@ from typing import Any, Dict, Generic, List, Optional, Set, Tuple, Type, TypeVar
 
 from fastapi import FastAPI
 
+# Import DynamoEndpoint for is_servable logic
+from dynamo.sdk.core.decorators.endpoint import DynamoEndpoint
+
 T = TypeVar("T", bound=object)
 import abc
 
@@ -100,10 +103,64 @@ class ServiceInterface(Generic[T], ABC):
         """List names of all registered endpoints"""
         pass
 
-    @abstractmethod
     def link(self, next_service: "ServiceInterface") -> "ServiceInterface":
-        """Link this service to another service, creating a pipeline"""
-        pass
+        """Link this service to another service, creating a pipeline.
+
+        This method allows linking a concrete service implementation to a service that depends on an interface.
+        It will:
+        1. Find all interface dependencies in the current service
+        2. Check if the next_service implements any of those interfaces
+        3. If exactly one match is found, override that dependency
+        4. If no matches or multiple matches are found, raise an error
+
+        Args:
+            next_service: The concrete service implementation to link
+
+        Returns:
+            The next_service that was linked to this service
+
+        Raises:
+            ValueError: If no matching interface is found or if multiple matches are found
+        """
+        # Get all dependencies that may be on interfaces, storing both interface and dep_key
+        interface_deps = [
+            (dep.on.inner, dep_key, dep)
+            for dep_key, dep in self.dependencies.items()
+            if dep.on is not None and issubclass(dep.on.inner, AbstractDynamoService)
+        ]
+
+        if not interface_deps:
+            # If no AbstractDynamoServices dependencies found, just record the link
+            LinkedServices.add((self, next_service))
+            return next_service
+
+        curr_inner = next_service.inner
+        # Find interfaces that next_service implements
+        matching_interfaces = []
+        for interface, dep_key, original_dep in interface_deps:
+            if issubclass(curr_inner, interface):
+                matching_interfaces.append((interface, dep_key, original_dep))
+
+        if not matching_interfaces:
+            raise ValueError(
+                f"{curr_inner.__name__} does not implement any interfaces required by {self.name}"
+            )
+
+        if len(matching_interfaces) > 1:
+            interface_names = [interface.__name__ for interface, _, _ in matching_interfaces]
+            raise ValueError(
+                f"{curr_inner.__name__} implements multiple interfaces required by {self.name}: {interface_names}"
+            )
+
+        # Get the matching interface, dep_key, and original dependency
+        _, _, matching_dep = matching_interfaces[0]
+
+        # Let's hot swap the on of the existing dependency with the new service
+        matching_dep.on = next_service
+
+        # Record the link
+        LinkedServices.add((self, next_service))
+        return next_service
 
     @abstractmethod
     def remove_unused_edges(self, used_edges: Set["ServiceInterface"]) -> None:
@@ -155,6 +212,51 @@ class ServiceInterface(Generic[T], ABC):
 
     def dynamo_address(self) -> tuple[str, str]:
         raise NotImplementedError()
+
+    def is_servable(self) -> bool:
+        """Check if this service is ready to be served.
+
+        A service is servable if:
+        1. It is not a subclass of AbstractDynamoService (concrete service)
+        2. If it is a subclass of AbstractDynamoService, all abstract methods are implemented
+           with @dynamo_endpoint decorators
+        """
+        # If not a AbstractDynamoService, it's servable by default
+        if not issubclass(self.inner, AbstractDynamoService):
+            return True
+
+        # For AbstractDynamoService, check implementations
+        abstract_endpoints = _get_abstract_dynamo_endpoints_for_servable(self.inner)
+        if not abstract_endpoints: # No abstract endpoints to implement, so it's servable
+            return True
+        return all(
+            _check_dynamo_endpoint_implemented_for_servable(self.inner, name)
+            for name in abstract_endpoints
+        )
+
+
+# Helper functions for is_servable (adapted from lib/service.py and core/lib.py)
+# Renamed to avoid potential conflicts if these files are merged later.
+def _is_dynamo_ep_for_servable(func: Any) -> bool:
+    """True if the function is a DynamoEndpoint instance."""
+    return isinstance(func, DynamoEndpoint)
+
+
+def _get_abstract_dynamo_endpoints_for_servable(cls: type) -> Set[str]:
+    """Get all abstract endpoint names from the class's MRO for servable check."""
+    return {
+        name
+        for base in cls.mro()
+        for name, val in base.__dict__.items()
+        if getattr(val, "__is_abstract_dynamo__", False)
+    }
+
+
+def _check_dynamo_endpoint_implemented_for_servable(cls: type, name: str) -> bool:
+    """Check if an endpoint is properly implemented for servable check."""
+    impl = getattr(cls, name, None)
+    # Ensure the implementation is a callable DynamoEndpoint
+    return impl is not None and callable(impl) and _is_dynamo_ep_for_servable(impl)
 
 
 @dataclass
