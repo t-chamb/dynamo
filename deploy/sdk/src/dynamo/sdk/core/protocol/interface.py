@@ -23,7 +23,12 @@ from typing import Any, Dict, Generic, List, Optional, Set, Tuple, Type, TypeVar
 from fastapi import FastAPI
 
 T = TypeVar("T", bound=object)
+import abc
 
+class AbstractDynamoService(abc.ABC):
+    """Base class for Dynamo service interfaces."""
+
+    pass
 
 class DynamoTransport(Enum):
     """Transport types supported by Dynamo services"""
