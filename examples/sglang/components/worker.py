@@ -144,14 +144,26 @@ class SGLangWorker:
     async def _process_stream(self, stream_source, unpack: bool):
         num_output_tokens_so_far = 0
         async for res in stream_source:
+            # Debug print to see response structure
+            print(f"Stream response: {res}")
+            
+            # Rest of your code
             data = res.data() if unpack else res
-            finish_reason = data["meta_info"]["finish_reason"]
+            print(f"Processed data: {data}")
+            
+            # Access output_ids or equivalent field safely
+            output_ids = data.get("output_ids", [])
+            if not output_ids and "outputs" in data:
+                # Try alternative field names
+                output_ids = data.get("outputs", [])
+            
+            finish_reason = data.get("meta_info", {}).get("finish_reason")
             if finish_reason:
                 # Don't forward the stop token
                 out = {"token_ids": [], "finish_reason": finish_reason["type"]}
             else:
-                next_total_toks = len(data["output_ids"])
-                out = {"token_ids": data["output_ids"][num_output_tokens_so_far:]}
+                next_total_toks = len(output_ids)
+                out = {"token_ids": output_ids[num_output_tokens_so_far:]}
             yield out
             num_output_tokens_so_far = next_total_toks
 
