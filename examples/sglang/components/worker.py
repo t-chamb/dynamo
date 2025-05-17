@@ -96,8 +96,9 @@ class SGLangWorker:
             sampling_params["ignore_eos"] = request.stop_conditions.ignore_eos
         return sampling_params
 
-    @dynamo_endpoint()
     async def generate(self, request: PreprocessedRequest):
+        print("request", request)
+        request = PreprocessedRequest.model_validate(request)
         sampling_params = self._build_sampling_params(request)
 
         if self.engine_args.disaggregation_mode != "null":
@@ -170,7 +171,8 @@ if __name__ == "__main__":
 
     @dynamo_worker()
     async def worker(runtime: DistributedRuntime, engine_args):
-        component = runtime.namespace("dynamo").component(SGLangWorker.__name__)
+        print("WHAT THE UCK")
+        component = runtime.namespace("dynamo").component("comp")
         await component.create_service()
 
         endpoint = component.endpoint("generate")
@@ -185,7 +187,7 @@ if __name__ == "__main__":
         else:
             decode_client = None
 
-        worker = SGLangWorker(engine_args, decode_client)
+        # worker = SGLangWorker(engine_args, decode_client)
 
         await register_llm(
             ModelType.Backend,
@@ -194,7 +196,8 @@ if __name__ == "__main__":
             engine_args.served_model_name,
         )
 
-        await endpoint.serve_endpoint(worker.generate)
+        print("serving endpoint")
+        await endpoint.serve_endpoint(SGLangWorker(engine_args, decode_client).generate)
 
     uvloop.install()
     asyncio.run(worker(engine_args))

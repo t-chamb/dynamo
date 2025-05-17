@@ -42,7 +42,6 @@ class SGLangDecodeWorker:
 
         logger.info("Decode worker initialized")
 
-    @dynamo_endpoint()
     async def generate(self, req: DisaggPreprocessedRequest):
         g = await self.engine.async_generate(
             input_ids=req.request.token_ids,
