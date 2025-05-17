@@ -25,7 +25,7 @@ pub mod llm_kvbm {
     use dynamo_llm::block_manager as kvbm;
 
     // kvbm specific imports
-    use kvbm::{block::registry::RegistrationHandle, events::*};
+    use kvbm::{block::registry::RegistrationHandle, events::*, config::NixlOptions};
 
     // std imports
     use std::sync::Arc;
@@ -34,6 +34,15 @@ pub mod llm_kvbm {
     use derive_builder::Builder;
     use derive_getters::Dissolve;
     use dynamo_runtime::DistributedRuntime;
+    use dynamo_llm::tokens::SequenceHash;
+    use dynamo_runtime::component::Namespace;
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum EventType {
+        Register(SequenceHash),
+        Remove(SequenceHash),
+    }
+
 
     /// Translate the Dynamo [`DistributedRuntime`] to the [`kvbm::config::KvManagerRuntimeConfig`]
     #[derive(Clone, Builder, Dissolve)]
@@ -41,6 +50,12 @@ pub mod llm_kvbm {
     pub struct DynamoKvbmRuntimeConfig {
         pub runtime: DistributedRuntime,
         pub nixl: kvbm::config::NixlOptions,
+    }
+
+    impl DynamoKvbmRuntimeConfig {
+        pub fn builder() -> DynamoKvbmRuntimeConfigBuilder {
+            DynamoKvbmRuntimeConfigBuilder::default()
+        }
     }
 
     impl DynamoKvbmRuntimeConfigBuilder {
@@ -58,14 +73,25 @@ pub mod llm_kvbm {
     /// Dynamo LLM KV router message protocol.
     pub struct DynamoEventManager {
         // TODO: Implement the Dynamo Event Manager
+        runtime: DistributedRuntime,
+        event_channel: tokio::sync::mpsc::UnboundedSender<Vec<EventType>>,
     }
 
     impl DynamoEventManager {
-        pub fn new() -> (
+        pub fn new(runtime: DistributedRuntime, namespace_name: &str) -> (
             Arc<Self>,
             tokio::sync::mpsc::UnboundedReceiver<Vec<EventType>>, //todo change for a proper receiver
         ) {
-            todo!()
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let namespace = runtime.namespace(namespace_name);
+
+            (
+                Arc::new(Self {
+                    namespace,
+                    event_channel: tx,
+                }),
+                rx,
+            )
         }
 
         pub fn publisher(self: &Arc<Self>) -> Publisher {
@@ -73,23 +99,49 @@ pub mod llm_kvbm {
         }
     }
 
-    impl EventManager for DynamoEventManager {}
+    impl kvbm::events::EventManager for DynamoEventManager {}
 
-    impl BlockRegisterPublisher for DynamoEventManager {
-        fn publish(&self, _handles: Vec<Arc<RegistrationHandle>>) {
-            unimplemented!()
+    #[async_trait]
+    impl kvbm::events::EventPublisher for DynamoEventManager {
+        fn publish(&self, handles: Vec<Arc<RegistrationHandle>>) {
+            let events = handles
+                .into_iter()
+                .map(|handle| EventType::Register(handle.sequence_hash()))
+                .collect::<Vec<_>>();
+
+            if self.namespace
+                .publish("block_events", &events)
+                .await
+                .is_err()
+            {
+                tracing::warn!("Failed to publish RegisterBlock events");
+            }
         }
     }
 
-    impl BlockReleasePublisher for DynamoEventManager {
-        fn block_release(&self, _registration_handle: &RegistrationHandle) {
-            unimplemented!()
+    #[async_trait]
+    impl kvbm::events::EventReleaseManager for DynamoEventManager {
+        async fn block_release(&self, registration_handle: &RegistrationHandle) {
+            let event = EventType::Remove(registration_handle.sequence_hash());
+
+            if self.namespace
+                .publish("block_events", &vec![event])
+                .await
+                .is_err()
+            {
+                tracing::warn!("Failed to publish ReleaseBlock event");
+            }
         }
     }
 }
 
 #[allow(unused_imports)]
 use llm_kvbm::*;
+
+use dynamo_runtime::{DistributedRuntime, Runtime};
+use dynamo_llm::block_manager::NixlOptions;
+use dynamo_llm::block_manager::storage::DeviceAllocator;
+use dynamo_llm::block_manager::KvManagerLayoutConfig;
 
 // fn create_dynamo_block_manager() -> ReferenceBlockManager {
 //     let worker_id = WORKER_ID.fetch_add(1, Ordering::SeqCst);
@@ -127,6 +179,38 @@ use llm_kvbm::*;
 
 //     ReferenceBlockManager::new(config).unwrap()
 // }
+
+#[tokio::test]
+async fn test_dynamo_kvbm_runtime_config_builder() {
+    let rt = Runtime::from_current().unwrap();
+    let runtime = DistributedRuntime::from_settings(rt.clone()).await.unwrap();
+    let nixl = NixlOptions::Enabled;
+
+    let config = DynamoKvbmRuntimeConfig::builder()
+        .runtime(runtime.clone())
+        .nixl(nixl)
+        .build()
+        .unwrap();
+
+    assert_eq!(config.worker_id, runtime.primary_lease().unwrap().id() as u64);
+   //assert!(config.cancellation_token().is_child_of(runtime.primary_token()));
+    assert!(matches!(config.nixl, NixlOptions::Enabled));
+}
+
+#[tokio::test]
+async fn test_nixl() {
+    let rt = Runtime::from_current().unwrap();
+    let runtime = DistributedRuntime::from_settings(rt.clone()).await.unwrap();
+    let nixl = NixlOptions::Enabled;
+
+    let config = KvManagerLayoutConfig::builder()
+        .num_blocks(8)
+        .allocator(DeviceAllocator::new(0).unwrap())
+        .build()
+        .unwrap();
+
+
+}
 
 #[test]
 fn test_dynamo_block_manager_blocking() {
