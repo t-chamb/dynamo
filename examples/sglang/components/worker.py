@@ -199,7 +199,7 @@ if __name__ == "__main__":
         else:
             decode_client = None
 
-        # worker = SGLangWorker(engine_args, decode_client)
+        worker = SGLangWorker(engine_args, decode_client)
 
         await register_llm(
             ModelType.Backend,
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         )
 
         print("serving endpoint")
-        await endpoint.serve_endpoint(SGLangWorker(engine_args, decode_client).generate)
+        await endpoint.serve_endpoint(worker.generate)
 
     uvloop.install()
     asyncio.run(worker(engine_args))
