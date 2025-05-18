@@ -42,8 +42,12 @@ classifiers = [
 dependencies = [
     "networkx",
     "pandas",
+    "tabulate",
     "transformers",
 ]
+
+[project.scripts]
+datagen = "data_generator.cli:main"
 
 [project.urls]
 Repository = "https://github.com/ai-dynamo/dynamo.git"

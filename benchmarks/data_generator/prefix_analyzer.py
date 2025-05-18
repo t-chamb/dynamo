@@ -153,7 +153,7 @@ class PrefixAnalyzer:
         return cache_hit_rates
 
 
-if __name__ == "__main__":
+def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Analyze prefix dataset statistics")
@@ -181,3 +181,7 @@ if __name__ == "__main__":
     # Create analyzer instance
     analyzer = PrefixAnalyzer(dataset_path, block_size=block_size)
     analyzer.analyze()
+
+
+if __name__ == "__main__":
+    main()

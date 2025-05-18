@@ -17,6 +17,7 @@ from typing import Dict, List
 
 import numpy as np
 import pandas as pd
+from tabulate import tabulate
 
 
 def calculate_and_print_statistics(metrics: Dict[str, List[float]]) -> pd.DataFrame:
@@ -47,7 +48,8 @@ def calculate_and_print_statistics(metrics: Dict[str, List[float]]) -> pd.DataFr
             }
         )
 
+    # Replace the printing code with tabulate
     stats_df = pd.DataFrame(stats_data, index=metric_names)
-    print(stats_df, "\n")
+    print(tabulate(stats_df, headers="keys", tablefmt="pretty", floatfmt=".2f"), "\n")
 
     return stats_df

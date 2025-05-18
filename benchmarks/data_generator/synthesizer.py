@@ -25,7 +25,6 @@ from data_generator.graph_utils import (
     _precompute_transition_cdfs,
     _remove_leaves,
 )
-from data_generator.logging import calculate_and_print_statistics
 from data_generator.protocols import CACHE_END, END_NODE, SUPER_ROOT
 from data_generator.sampler import EmpiricalSampler, sample_from_cdf
 
@@ -348,9 +347,11 @@ class Synthesizer:
         return rep
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     from pathlib import Path
+
+    from data_generator.logging import calculate_and_print_statistics
 
     parser = argparse.ArgumentParser(description="Synthesize Mooncake-Esque dataset")
     parser.add_argument(
@@ -452,3 +453,7 @@ if __name__ == "__main__":
         for request in requests:
             f.write(json.dumps(request) + "\n")
     print(f"synthetic dataset saved at {Path(output_file).resolve()}")
+
+
+if __name__ == "__main__":
+    main()
