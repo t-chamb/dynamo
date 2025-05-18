@@ -53,7 +53,12 @@ jobs:
       - name: Run pytest
         env:
           PYTEST_MARKS: "pre_merge or mypy"
-        run: Run pytest for data_generator
+        run: |
+          docker run -w /workspace --name ${{ env.CONTAINER_ID }}_pytest ${{ steps.define_image_tag.outputs.image_tag }} pytest --basetemp=/tmp --junitxml=${{ env.PYTEST_XML_FILE }} -m "${{ env.PYTEST_MARKS }}"
+      - name: Run pytest for benchmarks
+        env:
+          PYTEST_MARKS: "pre_merge or mypy"
+        run: |
           docker run -w /workspace --name ${{ env.CONTAINER_ID }}_pytest ${{ steps.define_image_tag.outputs.image_tag }} bash -ec 'pip install -e ./benchmarks && pytest --basetemp=/tmp --junitxml=${{ env.PYTEST_XML_FILE }} -m "${{ env.PYTEST_MARKS }}" ./benchmarks/data_generator/tests'
       - name: Copy test report from test Container
         if: always()
