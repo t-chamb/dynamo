@@ -29,6 +29,16 @@ python -m benchmarks.data_utils.prefix_analyzer --input-file <path_to_trace.json
 
 The script will print out summary statistics for ISL, OSL, user prompt lengths, and the theoretical cache hit rate (assuming an infinite cache).
 
+The trace file is expected to be in the [mooncake trace file format](https://github.com/kvcache-ai/Mooncake/blob/d21da178bae8db9651cf18a76824c084145fc725/mooncake_trace.jsonl). For example, the first few lines would look like this:
+
+```
+{"timestamp": 0, "input_length": 6755, "output_length": 500, "hash_ids": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]}
+{"timestamp": 0, "input_length": 7319, "output_length": 490, "hash_ids": [0, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]}
+{"timestamp": 0, "input_length": 7234, "output_length": 794, "hash_ids": [0, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41]}
+{"timestamp": 0, "input_length": 2287, "output_length": 316, "hash_ids": [0, 42, 43, 44, 45]}
+```
+Note that each new hash id is the next consecutive integer after the last one used. To generate these increasing hash ids from a list of texts, we provide the `texts_to_hashes` function in `hasher.py`.
+
 ## Synthesizer
 
 The Synthesizer goes a step further:
@@ -57,8 +67,6 @@ python -m benchmarks.data_utils.synthesizer --input-file <path_to_trace.jsonl> -
 ---
 
 This directory is currently used for generating synthetic data based on the mooncake dataset, but should be easily extendible to any request datasets with (prefix) hash ids, with a current caveat. The synthesizer is designed to work for jsonl files in the "mooncake" trace file format, meaning that the input are increasing integers of block hashes. For now, new block hashes must be the next consecutive integer, otherwise will not work.
-
-If you want to generate these increasing hash ids from a list of texts, you can use the `texts_to_hashes` function in `hasher.py`.
 
 ### How it works
 
