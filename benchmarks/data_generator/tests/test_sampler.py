@@ -16,8 +16,7 @@
 from collections import Counter
 
 import numpy as np
-
-from benchmarks.data_generator.sampler import EmpiricalSampler
+from data_generator.sampler import EmpiricalSampler
 
 
 def test_empirical_sampler_distribution():

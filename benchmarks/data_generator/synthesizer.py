@@ -20,15 +20,14 @@ from typing import Any, Optional
 import networkx as nx
 import numpy as np
 import pandas as pd
-
-from benchmarks.data_generator.graph_utils import (
+from data_generator.graph_utils import (
     _merge_chains,
     _precompute_transition_cdfs,
     _remove_leaves,
 )
-from benchmarks.data_generator.logging import calculate_and_print_statistics
-from benchmarks.data_generator.protocols import CACHE_END, END_NODE, SUPER_ROOT
-from benchmarks.data_generator.sampler import EmpiricalSampler, sample_from_cdf
+from data_generator.logging import calculate_and_print_statistics
+from data_generator.protocols import CACHE_END, END_NODE, SUPER_ROOT
+from data_generator.sampler import EmpiricalSampler, sample_from_cdf
 
 
 class Synthesizer:
