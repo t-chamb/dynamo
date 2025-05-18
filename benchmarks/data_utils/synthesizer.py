@@ -26,9 +26,9 @@ from benchmarks.data_utils.graph_utils import (
     _precompute_transition_cdfs,
     _remove_leaves,
 )
+from benchmarks.data_utils.logging import calculate_and_print_statistics
 from benchmarks.data_utils.protocols import CACHE_END, END_NODE, SUPER_ROOT
 from benchmarks.data_utils.sampler import EmpiricalSampler, sample_from_cdf
-from benchmarks.utils.logging import calculate_and_print_statistics
 
 
 class Synthesizer:

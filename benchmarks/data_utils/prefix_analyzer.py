@@ -16,7 +16,7 @@
 import json
 from collections import Counter
 
-from benchmarks.utils.logging import calculate_and_print_statistics
+from benchmarks.data_utils.logging import calculate_and_print_statistics
 
 
 class PrefixAnalyzer:
