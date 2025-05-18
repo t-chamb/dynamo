@@ -25,8 +25,6 @@ python -m benchmarks.data_utils.prefix_analyzer --input-file <path_to_trace.json
 - `--input-file`: Path to your trace file in jsonl format (default: `mooncake_trace.jsonl`)
 - `--block-size`: Block size for prefix calculation (default: 512)
 
----
-
 The script will print out summary statistics for ISL, OSL, user prompt lengths, and the theoretical cache hit rate (assuming an infinite cache).
 
 The trace file is expected to be in the [mooncake trace file format](https://github.com/kvcache-ai/Mooncake/blob/d21da178bae8db9651cf18a76824c084145fc725/mooncake_trace.jsonl). For example, the first few lines would look like this:
@@ -56,7 +54,7 @@ python -m benchmarks.data_utils.synthesizer --input-file <path_to_trace.jsonl> -
 **Options:**
 - `--input-file`: Path to the input trace file (default: `mooncake_trace.jsonl`)
 - `--num-requests`: Number of requests to synthesize (default: 100000)
-- `--speedup-ratio`: Factor to speed up request intervals (default: 1)
+- `--speedup-ratio`: Factor to speed up request intervals. It effectively divides the synthetic timestamps by this value (default: 1)
 - `--depth-multiplier`: Multiplier for prefix lengths (default: 1.0)
 - `--width-multiplier`: Number of times to replicate the core radix tree (default: 1)
 - `--prompt-len-multiplier`: Multiplier for leaf path lengths (default: 1.0, use <1 for shorter prompts)
@@ -64,11 +62,43 @@ python -m benchmarks.data_utils.synthesizer --input-file <path_to_trace.jsonl> -
 - `--block-size`: Block size for prefilling and decoding (default: 512)
 - `--output-file`: Path to the output file (default: auto-generated from input file and options)
 
----
+### Example
 
-This directory is currently used for generating synthetic data based on the mooncake dataset, but should be easily extendible to any request datasets with (prefix) hash ids, with a current caveat. The synthesizer is designed to work for jsonl files in the "mooncake" trace file format, meaning that the input are increasing integers of block hashes. For now, new block hashes must be the next consecutive integer, otherwise will not work.
+Say we only have these hash lists:
 
-### How it works
+```
+[0, 1, 2, (3)]
+[0, 1]
+[0, 1, 2]
+[0, (4), (5)]
+```
+
+First, we identify the "core prefix nodes" as [0, 1, 2] since they are visited more than once. The nodes [3, 4, 5] would be considered "user prompts" as they only appear once (noted in brackets).
+
+If we set the `depth-multiplier` to 2, then the core prefix branches will be stretched, effectively giving:
+
+```
+[0, 1, 2, 3, 4, 5, 6, (7)]
+[0, 1, 2, 3]
+[0, 1, 2, 3, 4]
+[0, 1, (8), (9)]
+```
+
+
+Note that the "prompt branches" are not stretched by `depth-multiplier`. They can be separately modified by applying `prompt-len-multiplier`.
+
+Now, if we set `width-multiplier` to 2, then each row will have a 50 percent chance of being incremented by a large integer, so that they will be effectively separated into a new radix tree, which matches the statistics of the original one, but having completely different roots.
+
+For example, if rows 2 and 4 are offseted, then we would get:
+
+```
+[0, 1, 2, 3, 4, 5, 6, (7)]
+[10, 11, 12, 13]
+[0, 1, 2, 3, 4]
+[10, 11, (14), (15)]
+```
+
+### Implementation details
 
 The generation algorithm, simplified, is as follows
 
