@@ -19,7 +19,7 @@ import random
 import tempfile
 import unittest
 
-from benchmarks.data_utils.synthesizer import Synthesizer
+from benchmarks.data_generator.synthesizer import Synthesizer
 
 
 # Helper function to create and dump data

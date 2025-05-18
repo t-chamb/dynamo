@@ -17,7 +17,7 @@ import pytest
 from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
-from benchmarks.data_utils.hasher import texts_to_hashes
+from benchmarks.data_generator.hasher import texts_to_hashes
 
 
 @pytest.fixture(scope="module")

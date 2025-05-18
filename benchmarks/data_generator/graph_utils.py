@@ -16,8 +16,8 @@
 import networkx as nx
 import numpy as np
 
-from benchmarks.data_utils.protocols import CACHE_END, END_NODE, SUPER_ROOT
-from benchmarks.data_utils.sampler import get_cdf
+from benchmarks.data_generator.protocols import CACHE_END, END_NODE, SUPER_ROOT
+from benchmarks.data_generator.sampler import get_cdf
 
 
 def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:
