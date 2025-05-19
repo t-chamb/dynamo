@@ -44,6 +44,7 @@ dependencies = [
     "pandas",
     "tabulate",
     "transformers",
+    "pytest-mypy",
 ]
 
 [project.scripts]
@@ -61,3 +62,20 @@ packages = ["data_generator"]
 
 [tool.setuptools.package-data]
 data_generator = ["**/*.py"]
+
+[tool.mypy]
+explicit_package_bases = true
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+addopts = [
+    "-ra",
+    "--showlocals",
+    "--strict-markers",
+    "--strict-config",
+    "--mypy",  # This flag enables mypy type checking during pytest runs
+    "--ignore-glob=*model.py",
+    "--ignore-glob=*_inc.py",
+    "--ignore-glob=deploy/cloud/api-store/*",
+]
