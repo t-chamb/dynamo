@@ -183,7 +183,6 @@ if __name__ == "__main__":
 
     @dynamo_worker()
     async def worker(runtime: DistributedRuntime, engine_args):
-        print("WHAT THE UCK")
         component = runtime.namespace("dynamo").component("comp")
         await component.create_service()
 

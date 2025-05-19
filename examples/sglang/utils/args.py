@@ -20,10 +20,10 @@ from sglang.srt.server_args import ServerArgs
 
 from dynamo.sdk.cli.utils import reserve_free_port
 from dynamo.sdk.lib.config import ServiceConfig
-
+from parser import DynamoArgumentParser
 
 def parse_sglang_args() -> ServerArgs:
-    parser = argparse.ArgumentParser()
+    parser = DynamoArgumentParser()
     bootstrap_port = _reserve_disaggregation_bootstrap_port()
 
     ServerArgs.add_cli_args(parser)
