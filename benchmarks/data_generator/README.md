@@ -19,7 +19,7 @@ The Prefix Analyzer provides statistics on the original trace file, such as Inpu
 It is useful for understanding the structure and reuse patterns in your dataset.
 
 ```bash
-python -m benchmarks.data_utils.prefix_analyzer --input-file <path_to_trace.jsonl> --block-size <block_size>
+datagen analyze --input-file <path_to_trace.jsonl> --block-size <block_size>
 ```
 
 - `--input-file`: Path to your trace file in jsonl format (default: `mooncake_trace.jsonl`)
@@ -48,7 +48,7 @@ This is useful for generating large, realistic synthetic traces for benchmarking
 ### How to run
 
 ```bash
-python -m benchmarks.data_utils.synthesizer --input-file <path_to_trace.jsonl> --num-requests <N> [other options...]
+datagen synthesize --input-file <path_to_trace.jsonl> --num-requests <N> [other options...]
 ```
 
 **Options:**
