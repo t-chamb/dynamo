@@ -495,7 +495,11 @@ COPY --from=ci_minimum /opt/dynamo/bindings /opt/dynamo/bindings
 COPY --from=base /usr/bin/nats-server /usr/bin/nats-server
 COPY --from=base /usr/local/bin/etcd/ /usr/local/bin/etcd/
 
-ENV PATH="${VIRTUAL_ENV}/bin:/usr/local/bin/etcd/:${PATH}"
+# Copy UCX from base image as plugin for NIXL
+COPY --from=base /usr/local/ucx /usr/local/ucx
+RUN echo "/usr/local/ucx/lib" >> /etc/ld.so.conf.d/hpcx.conf && \
+    ldconfig
+
 # Setup the python environment
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && \
