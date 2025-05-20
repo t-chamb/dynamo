@@ -32,12 +32,3 @@ VllmWorker:
     resources:
       gpu: 1
   common-configs: [model, block-size, max-model-len]
-
-EncodeWorker:
-  tensor-parallel-size: 1
-  router: random
-  ServiceArgs:
-    workers: 1
-    resources:
-      gpu: 1
-  common-configs: [model]

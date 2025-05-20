@@ -40,12 +40,3 @@ PrefillWorker:
     resources:
       gpu: 1
   common-configs: [model, block-size, max-model-len, kv-transfer-config]
-
-EncodeWorker:
-  tensor-parallel-size: 1
-  router: random
-  ServiceArgs:
-    workers: 1
-    resources:
-      gpu: 1
-  common-configs: [model]

@@ -20,8 +20,10 @@ import signal
 from typing import Optional
 
 import torch
+import requests
+from PIL import Image
+from io import BytesIO
 from components.disagg_router import PyDisaggregatedRouter
-from components.encode_worker import EncodeWorker
 from components.prefill_worker import PrefillWorker
 from transformers import LlavaForConditionalGeneration
 from utils.logging import check_required_workers
@@ -56,8 +58,6 @@ logger = logging.getLogger(__name__)
 class VllmWorker:
     # For disaggregated serving, we need to link the prefill worker to the vllm worker
     prefill_worker = depends(PrefillWorker)
-    # For aggregated serving, we need to link the encode worker to the vllm worker.
-    encode_worker = depends(EncodeWorker)
 
     def __init__(self):
         self.client = None
@@ -141,16 +141,8 @@ class VllmWorker:
                 vision_tower.vision_model.embeddings.position_embedding.num_embeddings
             )
         else:
-            enc_comp_ns, enc_comp_name = EncodeWorker.dynamo_address()  # type: ignore
-            self.encode_worker_client = (
-                await runtime.namespace(enc_comp_ns)
-                .component(enc_comp_name)
-                .endpoint("encode")
-                .client()
-            )
-
-            await check_required_workers(self.encode_worker_client, self.min_workers)
             self.disaggregated_router = None
+
         logger.info("VllmWorker has been initialized")
 
     def shutdown_vllm_engine(self, signum, frame):
@@ -177,7 +169,9 @@ class VllmWorker:
 
     @endpoint()
     async def generate(self, request: vLLMMultimodalRequest):
-        image_features = None
+        if request.image_url is None:
+            raise ValueError("Image URL is required for multimodal requests")
+
         if self.do_remote_prefill:
             if self.disaggregated_router is not None:
                 async with PrefillQueue.get_instance(
@@ -231,21 +225,6 @@ class VllmWorker:
             )
 
         else:
-            # For aggregated serving, the vllm worker will directly send the encode request to the encode worker.
-            encode_generator = await self.encode_worker_client.round_robin(
-                EncodeRequest(
-                    image_url=request.image_url,
-                ).model_dump_json()
-            )
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            async for encode_response in encode_generator:
-                encode_output = EncodeResponse.model_validate_json(
-                    encode_response.data()
-                )
-                image_features = torch.tensor(
-                    encode_output.image_features, device=device, dtype=torch.float16
-                )
-
             remote_prefill_params = None
             logger.info(
                 f"Prefilling locally for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
@@ -255,8 +234,11 @@ class VllmWorker:
         # rust HTTP requires Delta streaming
         request.sampling_params.output_kind = RequestOutputKind.DELTA
 
-        if image_features is not None:
-            multi_modal_data = {"image": image_features}
+        # If remote prefill is not used, we need to get the image data and pass it to the engine
+        if remote_prefill_params is None:
+            response = requests.get(request.image_url)
+            image_data = Image.open(BytesIO(response.content)).convert("RGB")
+            multi_modal_data = {"image": image_data}
         else:
             multi_modal_data = None
 

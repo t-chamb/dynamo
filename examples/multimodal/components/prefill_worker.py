@@ -21,7 +21,9 @@ import signal
 import sys
 
 import torch
-from components.encode_worker import EncodeWorker
+from PIL import Image
+from io import BytesIO
+import requests
 from pydantic import BaseModel
 from utils.logging import check_required_workers
 from utils.nixl import NixlMetadataStore
@@ -51,7 +53,6 @@ class RequestType(BaseModel):
     workers=1,
 )
 class PrefillWorker:
-    encode_worker = depends(EncodeWorker)
 
     def __init__(self):
         class_name = self.__class__.__name__
@@ -94,16 +95,6 @@ class PrefillWorker:
         else:
             raise RuntimeError("Failed to initialize engine client")
         runtime = dynamo_context["runtime"]
-
-        enc_comp_ns, enc_comp_name = EncodeWorker.dynamo_address()  # type: ignore
-        self.encode_worker_client = (
-            await runtime.namespace(enc_comp_ns)
-            .component(enc_comp_name)
-            .endpoint("encode")
-            .client()
-        )
-
-        await check_required_workers(self.encode_worker_client, self.min_workers)
 
         metadata = self.engine_client.nixl_metadata
         self._metadata_store = NixlMetadataStore("dynamo", runtime)
@@ -166,17 +157,6 @@ class PrefillWorker:
         if request.multimodal_data_source["image_url"] is None:
             raise ValueError("No image url provided for prefill request")
 
-        encode_generator = await self.encode_worker_client.round_robin(
-            EncodeRequest(
-                image_url=request.multimodal_data_source["image_url"],
-            ).model_dump_json()
-        )
-        async for encode_response in encode_generator:
-            encode_output = EncodeResponse.model_validate_json(encode_response.data())
-            image_features = torch.tensor(
-                encode_output.image_features, device="cpu", dtype=torch.float16
-            )
-
         sampling_params = request.sampling_params
         sampling_params.max_tokens = 1
         sampling_params.min_tokens = 1
@@ -203,8 +183,8 @@ class PrefillWorker:
         # some placeholder dummy tokens were inserted based on the embedding size in the worker.py.
         # The structure of the prompt is "\nUSER: <image> <dummy_tokens>\n<user_prompt>\nASSISTANT:", need to remove the dummy tokens after the image token.
         IMAGE_TOKEN_ID = 32000
-        embedding_size = image_features.shape[1]
-        padding_size = embedding_size - 1
+        image_feature_shape = 577
+        padding_size = image_feature_shape - 1
         image_token_index = request.prompt_token_ids.index(IMAGE_TOKEN_ID)
         dummy_token_index = image_token_index + 1
         prompt_token_ids = (
@@ -212,11 +192,15 @@ class PrefillWorker:
             + request.prompt_token_ids[dummy_token_index + padding_size :]
         )
 
+        response = requests.get(request.multimodal_data_source["image_url"])
+        image_data = Image.open(BytesIO(response.content)).convert("RGB")
+        print("request.prompt_token_ids: ", prompt_token_ids)
+        print("image_data: ", image_data)
         async for _ in self.engine_client.generate(
             request_id=request.request_id,
             prompt=TokensPrompt(
                 prompt_token_ids=prompt_token_ids,
-                multi_modal_data={"image": image_features},
+                multi_modal_data={"image": image_data},
             ),
             sampling_params=sampling_params,
             remote_prefill_params=remote_prefill_params,
