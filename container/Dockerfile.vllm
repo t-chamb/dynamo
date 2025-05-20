@@ -503,7 +503,7 @@ RUN echo "/usr/local/ucx/lib" >> /etc/ld.so.conf.d/hpcx.conf && \
 # Setup the python environment
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-dev && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential python3-dev && \
     rm -rf /var/lib/apt/lists/* && \
     uv venv $VIRTUAL_ENV --python 3.12 && \
     echo "source $VIRTUAL_ENV/bin/activate" >> ~/.bashrc
