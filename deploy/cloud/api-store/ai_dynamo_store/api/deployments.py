@@ -16,6 +16,7 @@
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+import yaml
 from fastapi import APIRouter, HTTPException, Query
 
 from ..models.schemas import (
@@ -87,6 +88,9 @@ async def create_deployment(deployment: CreateDeploymentSchema):
         # Generate deployment name
         deployment_name = sanitize_deployment_name(deployment.name, deployment.bento)
 
+        raw_config_str = deployment.envs.pop("DYN_DEPLOYMENT_CONFIG", None)
+        config_data = yaml.safe_load(raw_config_str) if raw_config_str else None
+
         # Create the deployment using helper function
         created_crd = create_dynamo_deployment(
             name=deployment_name,
@@ -97,7 +101,7 @@ async def create_deployment(deployment: CreateDeploymentSchema):
                 "ngc-user": ownership["user_id"],
             },
             envs=deployment.envs,
-            config=deployment.config,
+            config=config_data,
         )
 
         # Create response schema
@@ -331,6 +335,8 @@ def update_deployment(name: str, deployment: UpdateDeploymentSchema):
             )
 
         deployment_name = sanitize_deployment_name(name, deployment.bento)
+        raw_config_str = deployment.envs.pop("DYN_DEPLOYMENT_CONFIG", None)
+        config_data = yaml.safe_load(raw_config_str) if raw_config_str else None
         updated_crd = update_dynamo_deployment(
             name=deployment_name,
             namespace=kube_namespace,
@@ -340,7 +346,7 @@ def update_deployment(name: str, deployment: UpdateDeploymentSchema):
                 "ngc-user": ownership["user_id"],
             },
             envs=deployment.envs,
-            config=deployment.config,
+            config=config_data,
         )
         resource = ResourceSchema(
             uid=updated_crd["metadata"]["uid"],
