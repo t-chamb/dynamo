@@ -100,7 +100,7 @@ def create_dynamo_deployment(
             "services": {},
             "envs": envs if envs else [],
             "config": config if config else {},
-        }
+        },
     }
 
     return create_custom_resource(
