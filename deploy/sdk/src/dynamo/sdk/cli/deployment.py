@@ -103,8 +103,6 @@ def _display_deployment_info(spinner: Spinner, deployment: Deployment) -> None:
 
 
 def _build_env_dicts(
-    config_file: Optional[TextIO] = None,
-    args: Optional[list[str]] = None,
     envs: Optional[list[str]] = None,
 ) -> list[dict]:
     """
@@ -118,12 +116,7 @@ def _build_env_dicts(
     Returns:
         List of dicts suitable for use as envs
     """
-    service_configs = resolve_service_config(config_file=config_file, args=args)
     env_dicts = []
-    if service_configs:
-        config_json = json.dumps(service_configs)
-        logger.info(f"Deployment service configuration: {config_json}")
-        env_dicts.append({"name": "DYN_DEPLOYMENT_CONFIG", "value": config_json})
     if envs:
         for env in envs:
             if "=" not in env:
@@ -146,7 +139,8 @@ def create_deployment(
     _cloud_client: BentoCloudClient = Provide[BentoMLContainer.bentocloud_client],
 ) -> Deployment:
     # Build env_dicts from config_file, args, and envs
-    env_dicts = _build_env_dicts(config_file=config_file, args=args, envs=envs)
+    service_configs = resolve_service_config(config_file=config_file, args=args)
+    env_dicts = _build_env_dicts(envs=envs)
 
     config_params = DeploymentConfigParameters(
         name=name,
@@ -156,6 +150,7 @@ def create_deployment(
         cli=True,
         dev=dev,
     )
+    config_params.config = service_configs
 
     try:
         config_params.verify()
@@ -223,12 +218,14 @@ def update_deployment(
     Returns:
         Deployment: The updated deployment object
     """
+    service_configs = resolve_service_config(config_file=config_file, args=args)
     # Build env_dicts from config_file, args, and envs
-    env_dicts = _build_env_dicts(config_file=config_file, args=args, envs=envs)
+    env_dicts = _build_env_dicts(envs=envs)
     config_params = DeploymentConfigParameters(
         name=name,
         envs=env_dicts,
         cli=True,
+        config=service_configs,
     )
     try:
         config_params.verify(create=False)

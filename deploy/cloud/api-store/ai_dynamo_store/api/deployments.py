@@ -97,6 +97,7 @@ async def create_deployment(deployment: CreateDeploymentSchema):
                 "ngc-user": ownership["user_id"],
             },
             envs=deployment.envs,
+            config=deployment.config,
         )
 
         # Create response schema
@@ -339,6 +340,7 @@ def update_deployment(name: str, deployment: UpdateDeploymentSchema):
                 "ngc-user": ownership["user_id"],
             },
             envs=deployment.envs,
+            config=deployment.config,
         )
         resource = ResourceSchema(
             uid=updated_crd["metadata"]["uid"],

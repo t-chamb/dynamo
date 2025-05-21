@@ -53,6 +53,7 @@ class DeploymentConfigSchema(BaseModel):
     labels: Optional[List[Dict[str, str]]] = None
     secrets: Optional[List[str]] = None
     services: Dict[str, Dict] = Field(default_factory=dict)
+    config: Optional[Dict[str, Dict]] = None
 
 
 class UpdateDeploymentSchema(DeploymentConfigSchema):
