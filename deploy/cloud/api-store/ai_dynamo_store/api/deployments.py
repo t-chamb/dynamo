@@ -88,8 +88,13 @@ async def create_deployment(deployment: CreateDeploymentSchema):
         # Generate deployment name
         deployment_name = sanitize_deployment_name(deployment.name, deployment.bento)
 
-        raw_config_str = deployment.envs.pop("DYN_DEPLOYMENT_CONFIG", None)
-        config_data = yaml.safe_load(raw_config_str) if raw_config_str else None
+        config = {}
+        if deployment.envs:
+            for i, env in enumerate(deployment.envs):
+                if env.get("name") == "DYN_DEPLOYMENT_CONFIG":
+                    config = yaml.safe_load(env.get("value", "{}"))
+                    del deployment.envs[i]
+                    break
 
         # Create the deployment using helper function
         created_crd = create_dynamo_deployment(
@@ -101,7 +106,7 @@ async def create_deployment(deployment: CreateDeploymentSchema):
                 "ngc-user": ownership["user_id"],
             },
             envs=deployment.envs,
-            config=config_data,
+            config=config,
         )
 
         # Create response schema
@@ -335,8 +340,13 @@ def update_deployment(name: str, deployment: UpdateDeploymentSchema):
             )
 
         deployment_name = sanitize_deployment_name(name, deployment.bento)
-        raw_config_str = deployment.envs.pop("DYN_DEPLOYMENT_CONFIG", None)
-        config_data = yaml.safe_load(raw_config_str) if raw_config_str else None
+        config = {}
+        if deployment.envs:
+            for i, env in enumerate(deployment.envs):
+                if env.get("name") == "DYN_DEPLOYMENT_CONFIG":
+                    config = yaml.safe_load(env.get("value", "{}"))
+                    del deployment.envs[i]
+                    break
         updated_crd = update_dynamo_deployment(
             name=deployment_name,
             namespace=kube_namespace,
@@ -346,7 +356,7 @@ def update_deployment(name: str, deployment: UpdateDeploymentSchema):
                 "ngc-user": ownership["user_id"],
             },
             envs=deployment.envs,
-            config=config_data,
+            config=config,
         )
         resource = ResourceSchema(
             uid=updated_crd["metadata"]["uid"],
