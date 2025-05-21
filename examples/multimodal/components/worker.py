@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import signal
+import base64
 from typing import Optional
 
 import torch
@@ -224,6 +225,7 @@ class VllmWorker:
                 + request.engine_prompt["prompt_token_ids"][dummy_token_index:]
             )
 
+            # prompt_ids = request.engine_prompt["prompt_token_ids"]
         else:
             remote_prefill_params = None
             logger.info(
@@ -236,8 +238,29 @@ class VllmWorker:
 
         # If remote prefill is not used, we need to get the image data and pass it to the engine
         if remote_prefill_params is None:
-            response = requests.get(request.image_url)
-            image_data = Image.open(BytesIO(response.content)).convert("RGB")
+            image_data = None
+            try:
+                if request.image_url.startswith("data:image/"):
+                    # Remove the data URL prefix to get just the base64 string
+                    base64_data = request.image_url.split(",", 1)[1]
+                    try:
+                        image_bytes = base64.b64decode(base64_data)
+                        image_data = Image.open(BytesIO(image_bytes)).convert("RGB")
+                    except base64.binascii.Error as e:
+                        raise ValueError(f"Invalid base64 encoding: {e}")
+                elif request.image_url.startswith("http") or request.image_url.startswith("https"):
+                    response = requests.get(request.image_url)
+                    response.raise_for_status()  # Raise an exception for bad status codes
+                    
+                    if not response.content:
+                        raise ValueError("Empty response content from image URL")
+                    image_data = Image.open(BytesIO(response.content)).convert("RGB")
+                else:
+                    image_data = Image.open(request.image_url).convert("RGB")
+            except Exception as e:
+                logger.error(f"Failed to process image: {e}")
+                raise ValueError(f"Failed to process image: {e}")
+
             multi_modal_data = {"image": image_data}
         else:
             multi_modal_data = None

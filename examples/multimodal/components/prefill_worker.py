@@ -192,10 +192,32 @@ class PrefillWorker:
             + request.prompt_token_ids[dummy_token_index + padding_size :]
         )
 
-        response = requests.get(request.multimodal_data_source["image_url"])
-        image_data = Image.open(BytesIO(response.content)).convert("RGB")
-        print("request.prompt_token_ids: ", prompt_token_ids)
-        print("image_data: ", image_data)
+        # prompt_token_ids = request.engine_prompt["prompt_token_ids"]
+        
+        image_url = request.multimodal_data_source["image_url"]
+        image_data = None
+        try:
+            if image_url.startswith("data:image/"):
+                # Remove the data URL prefix to get just the base64 string
+                base64_data = image_url.split(",", 1)[1]
+                try:
+                    image_bytes = base64.b64decode(base64_data)
+                    image_data = Image.open(BytesIO(image_bytes)).convert("RGB")
+                except base64.binascii.Error as e:
+                    raise ValueError(f"Invalid base64 encoding: {e}")
+            elif image_url.startswith("http") or image_url.startswith("https"):
+                response = requests.get(image_url)
+                response.raise_for_status()  # Raise an exception for bad status codes
+                
+                if not response.content:
+                    raise ValueError("Empty response content from image URL")
+                image_data = Image.open(BytesIO(response.content)).convert("RGB")
+            else:
+                image_data = Image.open(image_url).convert("RGB")
+        except Exception as e:
+            logger.error(f"Failed to process image: {e}")
+            raise ValueError(f"Failed to process image: {e}")
+
         async for _ in self.engine_client.generate(
             request_id=request.request_id,
             prompt=TokensPrompt(
