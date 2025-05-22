@@ -387,7 +387,7 @@ RUN uv build --wheel --out-dir /workspace/dist && \
     fi
 
 # Build NIXL wheel
-RUN cd /opt/nixl && uv build . --out-dir /workspace/dist --config-settings=setup-args="-Ducx_path=/usr/local/ucx"
+RUN cd /opt/nixl && uv build . --out-dir /workspace/dist
 
 #######################################
 ########## CI Minimum Image ###########
@@ -522,6 +522,8 @@ RUN uv pip install ai-dynamo[vllm] --find-links wheelhouse && \
 RUN --mount=type=bind,source=./container/deps/requirements.txt,target=/tmp/requirements.txt \
     uv pip install --requirement /tmp/requirements.txt
 
+# Set LD_LIBRARY_PATH to the NIXL plugin directory for UCX_MO shared object
+ENV LD_LIBRARY_PATH=/opt/dynamo/venv/lib/python3.12/site-packages/.nixl.mesonpy.libs/plugins
 # Tell vllm to use the Dynamo LLM C API for KV Cache Routing
 ENV VLLM_KV_CAPI_PATH="/opt/dynamo/bindings/lib/libdynamo_llm_capi.so"
 
