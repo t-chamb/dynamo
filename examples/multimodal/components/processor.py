@@ -186,8 +186,7 @@ class Processor(ProcessMixIn):
 
     # The generate endpoint will be used by the frontend to handle incoming requests.
     @endpoint()
-    async def generate(self, request: MultiModalRequest):
-        # TODO: After having the multimodal support in OpenAI compatible frontend, we can use that directly and remove the custom endpoint.
+    async def generate(self, raw_request: MultiModalRequest):
         msg = {
             "role": "user",
             "content": "USER: <image>\nQuestion:"
