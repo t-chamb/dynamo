@@ -389,6 +389,13 @@ func GenerateDynamoComponentsDeployments(ctx context.Context, parentDynamoGraphD
 		if err != nil {
 			return nil, err
 		}
+		// we only override the replicas if it is not set in the CRD.
+		// replicas, if set in the CRD must always be the source of truth.
+		if parentSpec, ok := parentDynamoGraphDeployment.Spec.Services[service.Name]; ok {
+			if parentSpec.DynamoComponentDeploymentSharedSpec.Replicas != nil {
+				deployment.Spec.Replicas = parentSpec.DynamoComponentDeploymentSharedSpec.Replicas
+			}
+		}
 		deployments[service.Name] = deployment
 	}
 	for _, service := range config.Services {
@@ -455,9 +462,7 @@ func overrideWithDynDeploymentConfig(ctx context.Context, dynamoDeploymentCompon
 	}
 	componentDynConfig := dynDeploymentConfig[dynamoDeploymentComponent.Spec.ServiceName]
 	if componentDynConfig != nil {
-		if componentDynConfig.ServiceArgs != nil && componentDynConfig.ServiceArgs.Workers != nil && dynamoDeploymentComponent.Spec.Replicas == nil {
-			// we only override the replicas if it is not set in the CRD.
-			// replicas, if set in the CRD set in the CRD must always be the source of truth.
+		if componentDynConfig.ServiceArgs != nil && componentDynConfig.ServiceArgs.Workers != nil {
 			dynamoDeploymentComponent.Spec.Replicas = componentDynConfig.ServiceArgs.Workers
 		}
 		if componentDynConfig.ServiceArgs != nil && componentDynConfig.ServiceArgs.Resources != nil {

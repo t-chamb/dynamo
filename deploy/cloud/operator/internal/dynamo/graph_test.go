@@ -472,7 +472,7 @@ func TestGenerateDynamoComponentsDeployments(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Test GenerateDynamoComponentsDeployments generate config from DYN_DEPLOYMENT_CONFIG env var (backward compatibility)",
+			name: "Test GenerateDynamoComponentsDeployments generate config from DYN_DEPLOYMENT_CONFIG env var",
 			args: args{
 				parentDynamoGraphDeployment: &v1alpha1.DynamoGraphDeployment{
 					ObjectMeta: metav1.ObjectMeta{
@@ -561,6 +561,189 @@ func TestGenerateDynamoComponentsDeployments(t *testing.T) {
 							},
 							ServiceName: "service1",
 							Replicas:    &[]int32{3}[0],
+							Resources: &compounaiCommon.Resources{
+								Requests: &compounaiCommon.ResourceItem{
+									CPU:    "2",
+									Memory: "2Gi",
+									GPU:    "2",
+									Custom: map[string]string{},
+								},
+								Limits: &compounaiCommon.ResourceItem{
+									CPU:    "2",
+									Memory: "2Gi",
+									GPU:    "2",
+									Custom: map[string]string{},
+								},
+							},
+							Autoscaling: &v1alpha1.Autoscaling{
+								Enabled:     true,
+								MinReplicas: 1,
+								MaxReplicas: 5,
+							},
+							ExternalServices: map[string]v1alpha1.ExternalService{
+								"service2": {
+									DeploymentSelectorKey:   "dynamo",
+									DeploymentSelectorValue: "service2/default",
+								},
+							},
+							Ingress: v1alpha1.IngressSpec{
+								Enabled: true,
+								Host:    "test-dynamographdeployment",
+							},
+							Labels: map[string]string{
+								commonconsts.KubeLabelDynamoComponent: "service1",
+							},
+						},
+						Config: &apiextensionsv1.JSON{
+							Raw: []byte(`{"service1":{"port":8080,"ServiceArgs":{"Workers":3, "Resources":{"CPU":"2", "Memory":"2Gi", "GPU":"2"}}}}`),
+						},
+					},
+					Status: v1alpha1.DynamoComponentDeploymentStatus{
+						Conditions:  nil,
+						PodSelector: nil,
+					},
+				},
+				"service2": {
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-dynamographdeployment-service2",
+						Namespace: "default",
+						Labels: map[string]string{
+							commonconsts.KubeLabelDynamoComponent: "service2",
+							commonconsts.KubeLabelDynamoNamespace: "default",
+						},
+					},
+					Spec: v1alpha1.DynamoComponentDeploymentSpec{
+						DynamoComponent: "dynamocomponent:ac4e234",
+						DynamoTag:       "dynamocomponent:MyService2",
+						DynamoComponentDeploymentSharedSpec: v1alpha1.DynamoComponentDeploymentSharedSpec{
+							Envs: []corev1.EnvVar{
+								{
+									Name:  "DYN_DEPLOYMENT_CONFIG",
+									Value: `{"service1":{"port":8080,"ServiceArgs":{"Workers":3, "Resources":{"CPU":"2", "Memory":"2Gi", "GPU":"2"}}}}`,
+								},
+							},
+							ServiceName:     "service2",
+							DynamoNamespace: &[]string{"default"}[0],
+							Autoscaling: &v1alpha1.Autoscaling{
+								Enabled: false,
+							},
+							Labels: map[string]string{
+								commonconsts.KubeLabelDynamoComponent: "service2",
+								commonconsts.KubeLabelDynamoNamespace: "default",
+							},
+							Ingress: v1alpha1.IngressSpec{
+								Enabled:                    false,
+								Host:                       "",
+								UseVirtualService:          false,
+								VirtualServiceGateway:      nil,
+								HostPrefix:                 nil,
+								Annotations:                nil,
+								Labels:                     nil,
+								TLS:                        nil,
+								HostSuffix:                 nil,
+								IngressControllerClassName: nil,
+							},
+						},
+						Config: &apiextensionsv1.JSON{
+							Raw: []byte(`{"service1":{"port":8080,"ServiceArgs":{"Workers":3, "Resources":{"CPU":"2", "Memory":"2Gi", "GPU":"2"}}}}`),
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Test GenerateDynamoComponentsDeployments, number of replicas always set by the parent CR",
+			args: args{
+				parentDynamoGraphDeployment: &v1alpha1.DynamoGraphDeployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-dynamographdeployment",
+						Namespace: "default",
+					},
+					Spec: v1alpha1.DynamoGraphDeploymentSpec{
+						DynamoGraph: "dynamocomponent:ac4e234",
+						Envs: []corev1.EnvVar{
+							{
+								Name:  "DYN_DEPLOYMENT_CONFIG",
+								Value: `{"service1":{"port":8080,"ServiceArgs":{"Workers":3, "Resources":{"CPU":"2", "Memory":"2Gi", "GPU":"2"}}}}`,
+							},
+						},
+						Services: map[string]*v1alpha1.DynamoComponentDeploymentOverridesSpec{
+							"service1": {
+								DynamoComponentDeploymentSharedSpec: v1alpha1.DynamoComponentDeploymentSharedSpec{
+									Resources: &compounaiCommon.Resources{
+										Requests: &compounaiCommon.ResourceItem{
+											CPU:    "10",
+											Memory: "10Gi",
+										},
+									},
+									Replicas: &[]int32{10}[0],
+								},
+							},
+						},
+					},
+				},
+				config: &DynamoGraphConfig{
+					DynamoTag:    "dynamocomponent:MyService2",
+					EntryService: "service1",
+					Services: []ServiceConfig{
+						{
+							Name:         "service1",
+							Dependencies: []map[string]string{{"service": "service2"}},
+							Config: Config{
+								HttpExposed: true,
+								Resources: &Resources{
+									CPU:    &[]string{"1"}[0],
+									Memory: &[]string{"1Gi"}[0],
+									GPU:    &[]string{"0"}[0],
+									Custom: map[string]string{},
+								},
+								Autoscaling: &Autoscaling{
+									MinReplicas: 1,
+									MaxReplicas: 5,
+								},
+								Workers: &[]int32{2}[0],
+							},
+						},
+						{
+							Name:         "service2",
+							Dependencies: []map[string]string{},
+							Config: Config{
+								Dynamo: &DynamoConfig{
+									Enabled:   true,
+									Namespace: "default",
+									Name:      "service2",
+								},
+							},
+						},
+					},
+				},
+				ingressSpec: &v1alpha1.IngressSpec{
+					Enabled: true,
+					Host:    "test-dynamographdeployment",
+				},
+			},
+			want: map[string]*v1alpha1.DynamoComponentDeployment{
+				"service1": {
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-dynamographdeployment-service1",
+						Namespace: "default",
+						Labels: map[string]string{
+							commonconsts.KubeLabelDynamoComponent: "service1",
+						},
+					},
+					Spec: v1alpha1.DynamoComponentDeploymentSpec{
+						DynamoComponent: "dynamocomponent:ac4e234",
+						DynamoTag:       "dynamocomponent:MyService2",
+						DynamoComponentDeploymentSharedSpec: v1alpha1.DynamoComponentDeploymentSharedSpec{
+							Envs: []corev1.EnvVar{
+								{
+									Name:  "DYN_DEPLOYMENT_CONFIG",
+									Value: `{"service1":{"port":8080,"ServiceArgs":{"Workers":3, "Resources":{"CPU":"2", "Memory":"2Gi", "GPU":"2"}}}}`,
+								},
+							},
+							ServiceName: "service1",
+							Replicas:    &[]int32{10}[0],
 							Resources: &compounaiCommon.Resources{
 								Requests: &compounaiCommon.ResourceItem{
 									CPU:    "2",
@@ -1443,7 +1626,7 @@ func Test_overrideWithDynDeploymentConfig(t *testing.T) {
 					Spec: nvidiacomv1alpha1.DynamoComponentDeploymentSpec{
 						DynamoComponentDeploymentSharedSpec: nvidiacomv1alpha1.DynamoComponentDeploymentSharedSpec{
 							ServiceName: "Frontend",
-							Replicas:    nil,
+							Replicas:    &[]int32{1}[0],
 							Resources: &common.Resources{
 								Requests: &common.ResourceItem{
 									CPU:    "1",
@@ -1579,49 +1762,6 @@ func Test_overrideWithDynDeploymentConfig(t *testing.T) {
 					},
 					Config: &apiextensionsv1.JSON{
 						Raw: []byte(`{"Frontend":{"port":8080,"ServiceArgs":{"Workers":3, "Resources":{"GPU":"2"}}},"Planner":{"environment":"kubernetes"}}`),
-					},
-				},
-			},
-		},
-		{
-			name: "do not override replicas if explicitly set in the CRD !",
-			args: args{
-				ctx: context.Background(),
-				dynamoDeploymentComponent: &nvidiacomv1alpha1.DynamoComponentDeployment{
-					Spec: nvidiacomv1alpha1.DynamoComponentDeploymentSpec{
-						DynamoComponentDeploymentSharedSpec: nvidiacomv1alpha1.DynamoComponentDeploymentSharedSpec{
-							ServiceName: "Frontend",
-							Replicas:    &[]int32{1}[0],
-							Resources: &common.Resources{
-								Requests: &common.ResourceItem{
-									CPU:    "1",
-									Memory: "1Gi",
-									GPU:    "1",
-								},
-							},
-						},
-						Config: &apiextensionsv1.JSON{
-							Raw: []byte(`{"Frontend":{"port":8080,"ServiceArgs":{"Workers":3}},"Planner":{"environment":"kubernetes"}}`),
-						},
-					},
-				},
-			},
-			wantErr: false,
-			expected: &nvidiacomv1alpha1.DynamoComponentDeployment{
-				Spec: nvidiacomv1alpha1.DynamoComponentDeploymentSpec{
-					DynamoComponentDeploymentSharedSpec: nvidiacomv1alpha1.DynamoComponentDeploymentSharedSpec{
-						ServiceName: "Frontend",
-						Replicas:    &[]int32{1}[0],
-						Resources: &common.Resources{
-							Requests: &common.ResourceItem{
-								CPU:    "1",
-								Memory: "1Gi",
-								GPU:    "1",
-							},
-						},
-					},
-					Config: &apiextensionsv1.JSON{
-						Raw: []byte(`{"Frontend":{"port":8080,"ServiceArgs":{"Workers":3}},"Planner":{"environment":"kubernetes"}}`),
 					},
 				},
 			},
