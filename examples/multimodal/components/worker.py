@@ -26,7 +26,7 @@ from PIL import Image
 from io import BytesIO
 from components.disagg_router import PyDisaggregatedRouter
 from components.prefill_worker import PrefillWorker
-from transformers import LlavaForConditionalGeneration
+from transformers import AutoImageProcessor, LlavaForConditionalGeneration
 from utils.logging import check_required_workers
 from utils.nixl import NixlMetadataStore
 from utils.prefill_queue import PrefillQueue
@@ -134,15 +134,18 @@ class VllmWorker:
             else:
                 self.disaggregated_router = None
 
-            model = LlavaForConditionalGeneration.from_pretrained(
-                self.engine_args.model
-            )
-            vision_tower = model.vision_tower
-            self.embedding_size = (
-                vision_tower.vision_model.embeddings.position_embedding.num_embeddings
-            )
         else:
             self.disaggregated_router = None
+            # For encoding
+            self.MODEL_ID = self.engine_args.model
+
+            self.image_processor = AutoImageProcessor.from_pretrained(
+                self.MODEL_ID, trust_remote_code=True
+            )
+
+            self.vision_model = LlavaForConditionalGeneration.from_pretrained(
+                self.MODEL_ID, device_map="auto", torch_dtype=torch.float16
+            ).eval()
 
         logger.info("VllmWorker has been initialized")
 
@@ -167,6 +170,18 @@ class VllmWorker:
                 await prefill_queue.enqueue_prefill_request(request)
 
         return callback
+    
+    def open_image(self, image: str) -> Image.Image:
+        try:
+            if image.startswith("http") or image.startswith("https"):
+                response = requests.get(image)
+                image_data = Image.open(BytesIO(response.content)).convert("RGB")
+            else:
+                image_data = Image.open(image).convert("RGB")
+        except Exception as e:
+            logger.error(f"Error opening image: {e}")
+            raise e
+        return image_data
 
     @endpoint()
     async def generate(self, request: vLLMMultimodalRequest):
@@ -224,44 +239,36 @@ class VllmWorker:
                 + [DUMMY_TOKEN_ID] * (self.embedding_size - 1)
                 + request.engine_prompt["prompt_token_ids"][dummy_token_index:]
             )
-
-            # prompt_ids = request.engine_prompt["prompt_token_ids"]
         else:
             remote_prefill_params = None
-            logger.info(
-                f"Prefilling locally for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
-            )
-            prompt_ids = request.engine_prompt["prompt_token_ids"]
 
         # rust HTTP requires Delta streaming
         request.sampling_params.output_kind = RequestOutputKind.DELTA
 
         # If remote prefill is not used, we need to get the image data and pass it to the engine
         if remote_prefill_params is None:
-            image_data = None
             try:
-                if request.image_url.startswith("data:image/"):
-                    # Remove the data URL prefix to get just the base64 string
-                    base64_data = request.image_url.split(",", 1)[1]
-                    try:
-                        image_bytes = base64.b64decode(base64_data)
-                        image_data = Image.open(BytesIO(image_bytes)).convert("RGB")
-                    except base64.binascii.Error as e:
-                        raise ValueError(f"Invalid base64 encoding: {e}")
-                elif request.image_url.startswith("http") or request.image_url.startswith("https"):
-                    response = requests.get(request.image_url)
-                    response.raise_for_status()  # Raise an exception for bad status codes
-                    
-                    if not response.content:
-                        raise ValueError("Empty response content from image URL")
-                    image_data = Image.open(BytesIO(response.content)).convert("RGB")
-                else:
-                    image_data = Image.open(request.image_url).convert("RGB")
+                image = self.open_image(request.image_url)
+                image_embeds = self.image_processor(images=image, return_tensors="pt")
+
+                with torch.no_grad():
+                    logger.debug(f"Vision model device: {self.vision_model.device}")
+                    vision_outputs = self.vision_model.vision_tower(
+                        image_embeds["pixel_values"].to(self.vision_model.device)
+                    )
+
+                    image_features = vision_outputs.last_hidden_state
+                    image_features = self.vision_model.multi_modal_projector(image_features)
+
             except Exception as e:
                 logger.error(f"Failed to process image: {e}")
                 raise ValueError(f"Failed to process image: {e}")
 
-            multi_modal_data = {"image": image_data}
+            multi_modal_data = {"image": image_features}
+            logger.info(
+                f"Prefilling locally for request {request.request_id} with length {len(request.engine_prompt['prompt_token_ids'])}"
+            )
+            prompt_ids = request.engine_prompt["prompt_token_ids"]
         else:
             multi_modal_data = None
 
