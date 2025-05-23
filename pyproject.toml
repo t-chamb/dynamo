@@ -67,7 +67,7 @@ vllm = [
 ]
 
 sglang = [
-    "sglang[all]>=0.4.6.post4"
+    "sglang[all]==0.4.6.post4"
 ]
 
 [project.scripts]
