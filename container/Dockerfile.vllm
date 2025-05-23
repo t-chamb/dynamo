@@ -488,6 +488,7 @@ FROM ${RUNTIME_IMAGE}:${RUNTIME_IMAGE_TAG} AS runtime
 WORKDIR /workspace
 ENV DYNAMO_HOME=/workspace
 ENV VIRTUAL_ENV=/opt/dynamo/venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ### COPY BINDINGS ###
 # Copy all bindings (wheels, lib, include) from ci_minimum
 COPY --from=ci_minimum /opt/dynamo/bindings /opt/dynamo/bindings
