@@ -24,9 +24,9 @@ The following tools help analyze and synthesize new data based on the [mooncake 
 {"timestamp": 3052, "input_length": 2287, "output_length": 316, "hash_ids": [0, 42, 43, 44, 45]}
 ```
 
-**Hash ID Generation:** Each new hash ID is the next consecutive integer after the last one used. To generate these increasing hash IDs from a list of texts, we provide the `texts_to_hashes` function in `hasher.py`.
+**Hash ID Generation:** Each new hash ID is the next consecutive integer after the last one used. Two `hash_ids` sharing the same integers represents the prefix overlap. To generate these increasing hash IDs from a list of texts, we provide the `texts_to_hashes` function in `hasher.py`.
 
-**Timestamp:** The arrival time (in milliseconds) of the request, which can be the same for multiple requests arriving simultaneously.
+**Timestamp:** The arrival time (in milliseconds) of the request since the first request, which can be the same for multiple requests arriving simultaneously.
 
 **Block Size and Hash IDs:** In this example, the `block_size` (the page size of the KV cache) is assumed to be 512. The length of the `hash_ids` array equals `input_length // block_size`.
 
