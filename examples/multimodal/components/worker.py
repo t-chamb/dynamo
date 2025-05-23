@@ -21,6 +21,7 @@ import base64
 from typing import Optional
 
 import torch
+import httpx
 import requests
 from PIL import Image
 from io import BytesIO
@@ -61,6 +62,8 @@ class VllmWorker:
     prefill_worker = depends(PrefillWorker)
 
     def __init__(self):
+        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_timeout = 30.0
         self.client = None
         self.min_workers = 1
         self.disaggregated_router: Optional[PyDisaggregatedRouter] = None
@@ -147,6 +150,9 @@ class VllmWorker:
                 self.MODEL_ID, device_map="auto", torch_dtype=torch.float16
             ).eval()
 
+        # Initialize HTTP client with default limits
+        self._http_client = httpx.AsyncClient(timeout=self._http_timeout)
+
         logger.info("VllmWorker has been initialized")
 
     def shutdown_vllm_engine(self, signum, frame):
@@ -154,6 +160,8 @@ class VllmWorker:
         logger.info(f"Received signal {signum}, shutting down")
         loop = asyncio.get_event_loop()
         try:
+            if self._http_client:
+                loop.run_until_complete(self._http_client.aclose())
             self.engine_client.close()
             logger.info("VllmWorker shutdown complete")
         except Exception as e:
@@ -171,17 +179,47 @@ class VllmWorker:
 
         return callback
     
-    def open_image(self, image: str) -> Image.Image:
+    async def load_image(self, image_url: str) -> Image.Image:
         try:
-            if image.startswith("http") or image.startswith("https"):
-                response = requests.get(image)
-                image_data = Image.open(BytesIO(response.content)).convert("RGB")
+            if image_url.startswith("data:image/"):
+                # Remove the data URL prefix to get just the base64 string
+                base64_data = image_url.split(",", 1)[1]
+                try:
+                    image_bytes = base64.b64decode(base64_data)
+                    image_data = BytesIO(image_bytes)
+                except base64.binascii.Error as e:
+                    raise ValueError(f"Invalid base64 encoding: {e}")
+            elif image_url.startswith(("http://", "https://")):
+                if not self._http_client:
+                    raise RuntimeError("HTTP client not initialized")
+                    
+                response = await self._http_client.get(image_url)
+                response.raise_for_status()
+
+                if not response.content:
+                    raise ValueError("Empty response content from image URL")
+                    
+                image_data = BytesIO(response.content)
             else:
-                image_data = Image.open(image).convert("RGB")
+                raise ValueError(f"Invalid image source: {image_url}")
+
+            # PIL is sync, so offload to a thread to avoid blocking the event loop
+            image = await asyncio.to_thread(Image.open, image_data)
+            
+            # Validate image format and convert to RGB
+            if image.format not in ('JPEG', 'PNG', 'WEBP'):
+                raise ValueError(f"Unsupported image format: {image.format}")
+                
+            image = image.convert("RGB")
+                
+            return image
+            
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error loading image: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error opening image: {e}")
-            raise e
-        return image_data
+            logger.error(f"Error loading image: {e}")
+            raise ValueError(f"Failed to load image: {e}")
 
     @endpoint()
     async def generate(self, request: vLLMMultimodalRequest):
@@ -249,25 +287,8 @@ class VllmWorker:
         if remote_prefill_params is None:
             image_url = request.image_url
             try:
-                if image_url.startswith("data:image/"):
-                    # Remove the data URL prefix to get just the base64 string
-                    base64_data = image_url.split(",", 1)[1]
-                    try:
-                        image_bytes = base64.b64decode(base64_data)
-                        image_data = BytesIO(image_bytes)
-                    except base64.binascii.Error as e:
-                        raise ValueError(f"Invalid base64 encoding: {e}")
-                elif image_url.startswith("http") or image_url.startswith("https"):
-                    response = requests.get(image_url)
-                    response.raise_for_status()  # Raise an exception for bad status codes
+                image_data = await self.load_image(request.image_url)
 
-                    if not response.content:
-                        raise ValueError("Empty response content from image URL")
-                    image_data = BytesIO(response.content)
-                else:
-                    raise ValueError(f"Invalid image source: {image_url}")
-
-                image_data = Image.open(image_data).convert("RGB")
                 image_embeds = self.image_processor(images=image_data, return_tensors="pt")
 
                 with torch.no_grad():
