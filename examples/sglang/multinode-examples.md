@@ -145,4 +145,17 @@ SGLang typically requires a warmup period to ensure the DeepGEMM kernels are loa
 
 ```bash
 curl <node-1-ip>:8000/v1/chat/completions \
-  -H "Content-Type: applica
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+    "messages": [
+    {
+        "role": "user",
+        "content": "In the heart of the tennis world, where champions rise and fall with each Grand Slam, lies the legend of the Golden Racket of Wimbledon. Once wielded by the greatest players of antiquity, this mythical racket is said to bestow unparalleled precision, grace, and longevity upon its rightful owner. For centuries, it remained hidden, its location lost to all but the most dedicated scholars of the sport. You are Roger Federer, the Swiss maestro whose elegant play and sportsmanship have already cemented your place among the legends, but whose quest for perfection remains unquenched even as time marches on. Recent dreams have brought you visions of this ancient artifact, along with fragments of a map that seems to lead to its resting place. Your journey will take you through the hallowed grounds of tennis history, from the clay courts of Roland Garros to the hidden training grounds of forgotten champions, and finally to a secret chamber beneath Centre Court itself. Character Background: Develop a detailed background for Roger Federer in this quest. Describe his motivations for seeking the Golden Racket, his tennis skills and personal weaknesses, and any connections to the legends of the sport that came before him. Is he driven by a desire to extend his career, to secure his legacy as the greatest of all time, or perhaps by something more personal? What price might he be willing to pay to claim this artifact, and what challenges from rivals past and present might stand in his way?"
+    }
+    ],
+    "stream":false,
+    "max_tokens": 30
+  }'
+```
+
