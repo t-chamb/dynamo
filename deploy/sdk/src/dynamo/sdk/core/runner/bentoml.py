@@ -23,6 +23,7 @@ from _bentoml_sdk.service.dependency import Dependency as BentoDependency
 from fastapi import FastAPI
 
 from dynamo.sdk.core.decorators.endpoint import DynamoClient, DynamoEndpoint
+from dynamo.sdk.core.protocol.deployment import Env
 from dynamo.sdk.core.protocol.interface import (
     DependencyInterface,
     DeploymentTarget,
@@ -80,6 +81,10 @@ class BentoServiceAdapter(ServiceMixin, ServiceInterface[T]):
         )
         image = kwargs.get("image")
         envs = kwargs.get("envs", [])
+        # attributes from decorators
+        for attr in ["workers", "resources"]:
+            if attr in kwargs:
+                config[attr] = kwargs[attr]
         self.image = image
         # Get service args from environment if available
         service_args = self._get_service_args(name)
@@ -90,13 +95,14 @@ class BentoServiceAdapter(ServiceMixin, ServiceInterface[T]):
                     config[key] = value
 
             # Extract and apply specific args if needed
+            if "resources" in service_args:
+                config["resources"] = service_args["resources"]
             if "workers" in service_args:
                 config["workers"] = service_args["workers"]
             if "envs" in service_args and envs:
                 envs.extend(service_args["envs"])
             elif "envs" in service_args:
                 envs = service_args["envs"]
-
         # Initialize BentoML service
         self._bentoml_service = BentoService(
             config=config,
@@ -148,6 +154,10 @@ class BentoServiceAdapter(ServiceMixin, ServiceInterface[T]):
     @property
     def inner(self) -> Type[T]:
         return self._bentoml_service.inner
+
+    @property
+    def envs(self) -> List[Env]:
+        return self._bentoml_service.envs
 
     def get_endpoints(self) -> Dict[str, DynamoEndpointInterface]:
         return self._endpoints

@@ -22,6 +22,8 @@ from typing import Any, Dict, Generic, List, Optional, Set, Tuple, Type, TypeVar
 
 from fastapi import FastAPI
 
+from dynamo.sdk.core.protocol.deployment import Env
+
 T = TypeVar("T", bound=object)
 
 
@@ -75,6 +77,17 @@ class ServiceInterface(Generic[T], ABC):
         pass
 
     @property
+    def dependencies(self) -> Dict[str, "DependencyInterface"]:
+        """Get the service dependencies"""
+        return {}
+
+    @property
+    @abstractmethod
+    def envs(self) -> List[Env]:
+        """Get the service's environment variables"""
+        return []
+
+    @property
     @abstractmethod
     def inner(self) -> Type[T]:
         """Get the inner service implementation class"""
@@ -110,20 +123,12 @@ class ServiceInterface(Generic[T], ABC):
         """Inject configuration from environment into service configs"""
         pass
 
-    @property
-    # @abstractmethod
-    def dependencies(self) -> Dict[str, "DependencyInterface"]:
-        """Get the service dependencies"""
-        return {}
-
-    # @property
     @abstractmethod
     def get_service_configs(self) -> Dict[str, ServiceConfig]:
         """Get all services"""
         return {}
 
     @property
-    # @abstractmethod
     def service_configs(self) -> List[ServiceConfig]:
         """Get all service configs"""
         return []
@@ -159,7 +164,7 @@ class LeaseConfig:
     ttl: int = 1  # seconds
 
 
-class ComponentType(str, Enum):
+class ComponentType:
     """Types of Dynamo components"""
 
     PLANNER = "planner"
@@ -173,9 +178,7 @@ class DynamoConfig:
     name: str | None = None
     namespace: str | None = None
     custom_lease: LeaseConfig | None = None
-    component_type: ComponentType | None = (
-        None  # Indicates if this is a meta/system component
-    )
+    component_type: str | None = None  # Indicates if this is a meta/system component
 
 
 class DeploymentTarget(ABC):

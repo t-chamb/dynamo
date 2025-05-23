@@ -19,6 +19,7 @@ import logging
 import os
 import shlex
 import sys
+from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Set, Type, TypeVar
 
 import psutil
@@ -28,6 +29,7 @@ from circus.watcher import Watcher
 from fastapi import FastAPI
 
 from dynamo.sdk.core.decorators.endpoint import DynamoClient, DynamoEndpoint
+from dynamo.sdk.core.protocol.deployment import Env
 from dynamo.sdk.core.protocol.interface import (
     DependencyInterface,
     DeploymentTarget,
@@ -80,6 +82,8 @@ class LocalService(ServiceMixin, ServiceInterface[T]):
         self._dynamo_config = dynamo_config or DynamoConfig(
             name=name, namespace="default"
         )
+        # Add the dynamo config to the service config
+        self._config["dynamo"] = asdict(self._dynamo_config)
         self._watcher = watcher
         self._socket = socket
         self.app = app or FastAPI(title=name)
@@ -111,6 +115,10 @@ class LocalService(ServiceMixin, ServiceInterface[T]):
     @property
     def config(self) -> ServiceConfig:
         return self._config
+
+    @property
+    def envs(self) -> List[Env]:
+        return self._config.get("envs", [])
 
     @property
     def inner(self) -> Type[T]:
