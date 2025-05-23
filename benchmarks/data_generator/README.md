@@ -15,7 +15,7 @@
 
 ## Prefix Analyzer
 
-The Prefix Analyzer provides statistics on the original trace file, such as Input Sequence Length (ISL), Output Sequence Length (OSL), and theoretical cache hit rate.
+The Prefix Analyzer provides statistics on a trace file, such as Input Sequence Length (ISL), Output Sequence Length (OSL), and theoretical cache hit rate.
 It is useful for understanding the structure and reuse patterns in your dataset.
 
 ```bash
