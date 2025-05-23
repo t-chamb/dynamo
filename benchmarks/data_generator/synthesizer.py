@@ -36,7 +36,7 @@ class Synthesizer:
         block_size: int = 512,
         num_copies: int = 1,
         speedup_ratio: float = 1.0,
-        context_len_multiplier: float = 1.0,
+        prefix_len_multiplier: float = 1.0,
         prompt_len_multiplier: float = 1.0,
     ):
         """Load the mooncake dataset and extract core statistics like
@@ -74,7 +74,7 @@ class Synthesizer:
         self.block_size = block_size
         self.num_copies = num_copies
         self.speedup_ratio = float(speedup_ratio)
-        self.context_len_multiplier = float(context_len_multiplier)
+        self.prefix_len_multiplier = float(prefix_len_multiplier)
         self.prompt_len_multiplier = float(prompt_len_multiplier)
 
         # assert correct arg bounds
@@ -85,8 +85,8 @@ class Synthesizer:
             isinstance(self.speedup_ratio, float) and self.speedup_ratio > 0
         ), "speedup_ratio must be a positive float"
         assert (
-            isinstance(self.context_len_multiplier, float)
-            and self.context_len_multiplier > 0
+            isinstance(self.prefix_len_multiplier, float)
+            and self.prefix_len_multiplier > 0
         ), "context_len_multiplier must be a positive float"
         assert (
             isinstance(self.prompt_len_multiplier, float)
@@ -187,8 +187,8 @@ class Synthesizer:
 
     def _relabel_nodes(self) -> None:
         # Scale node labels by length multiplier if needed
-        if self.context_len_multiplier > 1:
-            multiplier = int(np.ceil(self.context_len_multiplier))
+        if self.prefix_len_multiplier > 1:
+            multiplier = int(np.ceil(self.prefix_len_multiplier))
 
             # Create mapping for relabeling, preserving -1 and -2
             mapping = {
@@ -200,10 +200,10 @@ class Synthesizer:
             self.max_hash_id = multiplier * self.max_hash_id + multiplier
 
         # Shrink the lengths, but no need to relabel nodes
-        elif self.context_len_multiplier < 1:
+        elif self.prefix_len_multiplier < 1:
             for node in self.G.nodes():
                 self.G.nodes[node]["length"] = max(
-                    round(self.G.nodes[node]["length"] * self.context_len_multiplier), 1
+                    round(self.G.nodes[node]["length"] * self.prefix_len_multiplier), 1
                 )
 
     def _synthesize_leaf_path(self) -> list[int]:
@@ -373,13 +373,13 @@ def main():
         help="Factor to speed up request intervals (default: 1)",
     )
     parser.add_argument(
-        "--depth-multiplier",
+        "--prefix-len-multiplier",
         type=float,
         default=1.0,
         help="Multiplier for prefix lengths (default: 1.0)",
     )
     parser.add_argument(
-        "--width-multiplier",
+        "--prefix-root-multiplier",
         type=int,
         default=1,
         help="Number of times to replicate the core radix tree (default: 1)",
@@ -414,7 +414,7 @@ def main():
     if args.output_file is None:
         output_file = dataset_file.with_stem(
             f"{dataset_file.stem}_synth"
-            + f"_{int(args.depth_multiplier)}x{args.width_multiplier}+{args.prompt_len_multiplier}"
+            + f"_{int(args.prefix_len_multiplier)}x{args.prefix_root_multiplier}+{args.prompt_len_multiplier}"
             + f"_speedup{args.speedup_ratio}"
             + f"_maxisl{args.max_isl}"
         )
@@ -426,8 +426,8 @@ def main():
         str(dataset_file),
         block_size=args.block_size,
         speedup_ratio=args.speedup_ratio,
-        context_len_multiplier=args.depth_multiplier,
-        num_copies=args.width_multiplier,
+        prefix_len_multiplier=args.prefix_len_multiplier,
+        num_copies=args.prefix_root_multiplier,
         prompt_len_multiplier=args.prompt_len_multiplier,
     )
 
