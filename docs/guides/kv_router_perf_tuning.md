@@ -65,7 +65,7 @@ Such saturation can create a feedback loop—where the cache-rich worker continu
 
 ## Tuning Guidelines
 
-Currently, optimal use of our KV router requires understanding your backend engine's capacity and the prefix structure of your data. We provide analysis tools for this purpose in the `benchmarks` directory. In the future, we plan to enable automatic tuning of our KV router (via `Planner`) using worker feedback metrics and dynamic analysis of data prefix structures (WIP).
+Currently, optimal use of our KV router requires understanding your backend engine's capacity and the prefix structure of your data. We provide analysis tools for this purpose in the `benchmarks` directory. In the future, we plan to enable automatic tuning of our KV router (via `Planner`) using worker feedback metrics and dynamic analysis of data prefix structures (WIP). Below are several tips we recommend following.
 
 ### 1. Consider Total KV Block Allocation
 
