@@ -15,7 +15,7 @@
 
 # Benchmarks
 
-This directory contains benchmarking scripts and tools for performance evaluation of key system components including KV routing, disaggregation, and the Planner.
+This directory contains (will contain) benchmarking scripts and tools for performance evaluation of key system components including KV routing, disaggregation, and the Planner.
 
 ## Installation
 
@@ -26,5 +26,5 @@ pip install -e .
 ```
 
 Currently, this will install lightweight tools for:
-- Analyzing structured data with desired prefix structures (`datagen analyze`)
-- Synthesizing structured data for testing purposes (`datagen synthesize`)
+- Analyzing prefix-structured data (`datagen analyze`)
+- Synthesizing structured data customizable for testing purposes (`datagen synthesize`)
