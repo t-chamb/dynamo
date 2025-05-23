@@ -303,6 +303,10 @@ RUN uv build --wheel --out-dir /workspace/dist && \
         uv run --python 3.10 maturin build --release --features block-manager --out /workspace/dist; \
     fi
 
+# Install SGLang
+ARG SGLANG_VERSION=0.4.6.post4
+RUN uv pip install "sglang[all]==${SGLANG_VERSION}"
+
 #######################################
 ########## CI Minimum Image ###########
 #######################################
@@ -418,10 +422,6 @@ COPY --from=wheel_builder /workspace/dist/*.whl wheelhouse/
 RUN uv pip install ai-dynamo[vllm] --find-links wheelhouse && \
     ln -sf $VIRTUAL_ENV/bin/* /usr/local/bin/ && \
     rm -r wheelhouse
-
-# Install SGLang until we have ai-dynamo[sglang]
-ARG SGLANG_VERSION=0.4.6.post4
-RUN uv pip install "sglang[all]==${SGLANG_VERSION}"
 
 # Tell vllm to use the Dynamo LLM C API for KV Cache Routing
 ENV VLLM_KV_CAPI_PATH="/opt/dynamo/bindings/lib/libdynamo_llm_capi.so"
