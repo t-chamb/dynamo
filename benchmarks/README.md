@@ -15,7 +15,7 @@
 
 # Benchmarks
 
-This directory contains (will contain) benchmarking scripts and tools for performance evaluation of key system components including KV routing, disaggregation, and the Planner.
+This directory contains benchmarking scripts and tools for performance evaluation.
 
 ## Installation
 
