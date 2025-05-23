@@ -14,29 +14,27 @@ class TensorRTLLMEngine:
     def __init__(self, engine_args):
         self.engine_args = engine_args
         self._llm: Optional[LLM] = None
-        self._initialized = False
 
     async def initialize(self):
-        if not self._initialized:
+        if not self._llm:
             model = self.engine_args.pop("model")
             self._llm = LLM(
                 model=model,
                 **self.engine_args,
             )
-            self._initialized = True
 
     async def cleanup(self):
-        if self._initialized:
+        if self._llm:
             try:
                 self._llm.shutdown()
             except Exception as e:
                 logging.error(f"Error during cleanup: {e}")
             finally:
-                self._initialized = False
+                self._llm = None
 
     @property
     def llm(self):
-        if not self._initialized:
+        if not self._llm:
             raise RuntimeError("Engine not initialized")
         return self._llm
 

@@ -34,7 +34,7 @@ class ManagedThread(threading.Thread):
         self.kwargs = kwargs
         self.loop = loop
         self.daemon = True
-        self._current_future = None
+        self._current_future: Optional[concurrent.futures.Future] = None
 
         self._stop_event = threading.Event()
 
@@ -106,6 +106,9 @@ class Publishers:
 
     async def _create_metrics_publisher_endpoint(self):
         logging.debug("Creating metrics publisher endpoint")
+        if self.metrics_publisher is None:
+            logging.error("KV metrics publisher not initialized!")
+            return
         await self.metrics_publisher.create_endpoint(self.component)
 
     def _setup(self):
@@ -227,6 +230,10 @@ class Publishers:
         """
         if self.engine is None:
             logging.error("LLM engine not initialized!")
+            return
+
+        if self.kv_event_publisher is None:
+            logging.error("KV event publisher not initialized!")
             return
 
         events = self.engine.llm.get_kv_cache_events_async(timeout=5)
