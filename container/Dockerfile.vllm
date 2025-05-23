@@ -348,7 +348,7 @@ COPY --from=base /usr/local/nixl /opt/nvidia/nvda_nixl
 COPY --from=base /workspace /workspace
 COPY --from=base $VIRTUAL_ENV $VIRTUAL_ENV
 COPY --from=base /usr/local/ucx /usr/local/ucx
-RUN echo "/usr/local/ucx/lib" >> /etc/ld.so.conf.d/hpcx.conf && \
+RUN echo "/usr/local/ucx/lib" >> /etc/ld.so.conf.d/nixl-plugins.conf && \
     ldconfig
 COPY --from=base /opt/nixl /opt/nixl
 ENV PATH=$CARGO_HOME/bin:$VIRTUAL_ENV/bin:$PATH
@@ -498,7 +498,7 @@ COPY --from=base /usr/local/bin/etcd/ /usr/local/bin/etcd/
 
 # Copy UCX from base image as plugin for NIXL
 COPY --from=base /usr/local/ucx /usr/local/ucx
-RUN echo "/usr/local/ucx/lib" >> /etc/ld.so.conf.d/hpcx.conf && \
+RUN echo "/usr/local/ucx/lib" >> /etc/ld.so.conf.d/nixl-plugins.conf && \
     ldconfig
 
 # Setup the python environment
@@ -522,8 +522,9 @@ RUN uv pip install ai-dynamo[vllm] --find-links wheelhouse && \
 RUN --mount=type=bind,source=./container/deps/requirements.txt,target=/tmp/requirements.txt \
     uv pip install --requirement /tmp/requirements.txt
 
-# Set LD_LIBRARY_PATH to the NIXL plugin directory for UCX_MO shared object
-ENV LD_LIBRARY_PATH=/opt/dynamo/venv/lib/python3.12/site-packages/.nixl.mesonpy.libs/plugins
+# Add NIXL plugin directory to ld.so.conf.d/nixl-plugins.conf for UCX_MO shared object
+RUN echo "/opt/dynamo/venv/lib/python3.12/site-packages/.nixl.mesonpy.libs/plugins" >> /etc/ld.so.conf.d/nixl-plugins.conf && \
+    ldconfig
 # Tell vllm to use the Dynamo LLM C API for KV Cache Routing
 ENV VLLM_KV_CAPI_PATH="/opt/dynamo/bindings/lib/libdynamo_llm_capi.so"
 
