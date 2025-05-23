@@ -4,192 +4,66 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::{mpsc::Receiver, Notify};
 
 use dynamo_runtime::{
-    component::{self, Component, ComponentEndpointInfo},
     pipeline::{
         network::egress::push_router::PushRouter, ManyOut, Operator, RouterMode, SegmentSource,
         ServiceBackend, SingleIn, Source,
     },
-    protocols::{self, annotated::Annotated},
-    slug::Slug,
-    traits::DistributedRuntimeProvider as _,
-    transports::etcd::{self, KeyValue, WatchEvent},
+    protocols::annotated::Annotated,
+    transports::etcd::{KeyValue, WatchEvent},
     DistributedRuntime,
 };
 
-use super::ModelManager;
-use crate::protocols::openai::completions::{CompletionRequest, CompletionResponse};
 use crate::{
     backend::Backend,
+    kv_router::KvPushRouter,
     model_type::ModelType,
     preprocessor::{BackendInput, OpenAIPreprocessor},
     protocols::common::llm_backend::LLMEngineOutput,
-};
-use crate::{
-    key_value_store::{EtcdStorage, KeyValueStore, KeyValueStoreManager},
-    model_card::{self, ModelDeploymentCard},
-};
-use crate::{
-    kv_router::{scheduler::DefaultWorkerSelector, KvPushRouter, KvRouter},
     protocols::openai::chat_completions::{
         NvCreateChatCompletionRequest, NvCreateChatCompletionStreamResponse,
     },
+    protocols::openai::completions::{CompletionRequest, CompletionResponse},
+    protocols::openai::embeddings::{NvCreateEmbeddingRequest, NvCreateEmbeddingResponse},
 };
-use tracing;
 
-/// [ModelEntry] is a struct that contains the information for the HTTP service to discover models
-/// from the etcd cluster.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct ModelEntry {
-    /// Public name of the model
-    /// This will be used to identify the model in the HTTP service and the value used in an
-    /// an [OAI ChatRequest][crate::protocols::openai::chat_completions::NvCreateChatCompletionRequest].
-    pub name: String,
-
-    /// Component of the endpoint.
-    pub endpoint: protocols::Endpoint,
-
-    /// Specifies whether the model is a chat or completion model.s
-    pub model_type: ModelType,
-}
-
-impl ModelEntry {
-    pub fn requires_preprocessing(&self) -> bool {
-        matches!(self.model_type, ModelType::Backend)
-    }
-
-    /// Fetch the ModelDeploymentCard from NATS.
-    /// This does not touch it's fields so you may need to call move_from_nats on it.
-    pub async fn load_mdc(
-        &self,
-        endpoint_id: protocols::Endpoint,
-        etcd_client: &etcd::Client,
-    ) -> anyhow::Result<ModelDeploymentCard> {
-        let kvstore: Box<dyn KeyValueStore> =
-            Box::new(EtcdStorage::new(etcd_client.clone(), endpoint_id));
-        let card_store = Arc::new(KeyValueStoreManager::new(kvstore));
-        let card_key = ModelDeploymentCard::service_name_slug(&self.name);
-        match card_store
-            .load::<ModelDeploymentCard>(model_card::BUCKET_NAME, &card_key)
-            .await
-        {
-            Ok(Some(mdc)) => Ok(mdc),
-            Ok(None) => {
-                anyhow::bail!("Missing ModelDeploymentCard in etcd under key {card_key}");
-            }
-            Err(err) => {
-                anyhow::bail!(
-                    "Error fetching ModelDeploymentCard from etcd under key {card_key}. {err}"
-                );
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ModelNetworkName(String);
-
-impl ModelNetworkName {
-    /// Key to store this model entry in networked key-value store (etcd).
-    ///
-    /// It looks like this:
-    /// ns.cp.ep-694d967ca5efd804
-    fn from_parts(namespace: &str, component: &str, endpoint: &str, lease_id: i64) -> Self {
-        ModelNetworkName(
-            Slug::slugify(&format!("{namespace}.{component}.{endpoint}-{lease_id:x}")).to_string(),
-        )
-    }
-
-    // We can't do From<&component::Endpoint> here because we also need the lease_id
-    pub fn from_local(endpoint: &component::Endpoint, lease_id: i64) -> Self {
-        Self::from_parts(
-            &endpoint.component().namespace().to_string(),
-            &endpoint.component().name(),
-            endpoint.name(),
-            lease_id,
-        )
-    }
-
-    /// Fetch the ModelEntry from etcd.
-    pub async fn load_entry(&self, etcd_client: &etcd::Client) -> anyhow::Result<ModelEntry> {
-        let mut model_entries = etcd_client.kv_get(self.to_string(), None).await?;
-        if model_entries.is_empty() {
-            anyhow::bail!("No ModelEntry in etcd for key {self}");
-        }
-        let model_entry = model_entries.remove(0);
-        serde_json::from_slice(model_entry.value()).with_context(|| {
-            format!(
-                "Error deserializing JSON. Key={self}. JSON={}",
-                model_entry.value_str().unwrap_or("INVALID UTF-8")
-            )
-        })
-    }
-
-    /// Fetch the ModelDeploymentCard from NATS.
-    /// This does not touch it's fields so you may need to call move_from_nats on it.
-    /// TODO We have potentially two for each endpoint, one Chat and one Completion.
-    pub async fn load_mdc(
-        &self,
-        endpoint_id: protocols::Endpoint,
-        etcd_client: &etcd::Client,
-    ) -> anyhow::Result<ModelDeploymentCard> {
-        let entry = self.load_entry(etcd_client).await?;
-        entry.load_mdc(endpoint_id, etcd_client).await
-    }
-}
-
-impl From<&ComponentEndpointInfo> for ModelNetworkName {
-    fn from(cei: &ComponentEndpointInfo) -> Self {
-        Self::from_parts(&cei.namespace, &cei.component, &cei.endpoint, cei.lease_id)
-    }
-}
-
-impl std::fmt::Display for ModelNetworkName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+use super::{ModelEntry, ModelManager, MODEL_ROOT_PATH};
 
 pub struct ModelWatcher {
-    prefix: String,
-    manager: ModelManager,
+    manager: Arc<ModelManager>,
     drt: DistributedRuntime,
     router_mode: RouterMode,
-    kv_chooser: Option<Arc<KvRouter>>,
+    notify_on_model: Notify,
 }
 
 impl ModelWatcher {
-    pub async fn new(
-        component: Component,
-        model_manager: ModelManager,
-        network_prefix: &str,
+    pub fn new(
+        runtime: DistributedRuntime,
+        model_manager: Arc<ModelManager>,
         router_mode: RouterMode,
-    ) -> anyhow::Result<ModelWatcher> {
-        let kv_chooser = if router_mode.is_kv_routing() {
-            let selector = Box::new(DefaultWorkerSelector {});
-            let chooser = KvRouter::new(
-                component.clone(),
-                crate::DEFAULT_KV_BLOCK_SIZE,
-                Some(selector),
-            )
-            .await?;
-            Some(Arc::new(chooser))
-        } else {
-            None
-        };
-        Ok(Self {
-            prefix: network_prefix.to_string(),
+    ) -> ModelWatcher {
+        Self {
             manager: model_manager,
-            drt: component.drt().clone(),
+            drt: runtime,
             router_mode,
-            kv_chooser,
-        })
+            notify_on_model: Notify::new(),
+        }
     }
 
-    pub async fn watch(self: Arc<Self>, mut events_rx: Receiver<WatchEvent>) {
+    /// Wait until we have at least one chat completions model and return it's name.
+    pub async fn wait_for_chat_model(&self) -> String {
+        // Loop in case it gets added and immediately deleted
+        loop {
+            if let Some(model_name) = self.manager.list_chat_completions_models().first() {
+                return model_name.to_owned();
+            }
+            self.notify_on_model.notified().await
+        }
+    }
+
+    pub async fn watch(&self, mut events_rx: Receiver<WatchEvent>) {
         tracing::debug!("model watcher started");
 
         while let Some(event) = events_rx.recv().await {
@@ -198,30 +72,48 @@ impl ModelWatcher {
                     let model_entry = match serde_json::from_slice::<ModelEntry>(kv.value()) {
                         Ok(model_entry) => model_entry,
                         Err(err) => {
-                            tracing::error!(%err, ?kv, "Invalid JSON in model entry");
+                            match kv.value_str() {
+                                Ok(value) => {
+                                    tracing::error!(%err, value, "Invalid JSON in model entry")
+                                }
+                                Err(value_str_err) => {
+                                    tracing::error!(original_error = %err, %value_str_err, "Invalid UTF-8 string in model entry, expected JSON")
+                                }
+                            }
                             continue;
                         }
                     };
+                    let key = match kv.key_str() {
+                        Ok(k) => k,
+                        Err(err) => {
+                            tracing::error!(%err, ?kv, "Invalid UTF-8 string in model entry key, skipping");
+                            continue;
+                        }
+                    };
+                    self.manager.save_model_entry(key, model_entry.clone());
+
                     if self.manager.has_model_any(&model_entry.name) {
-                        tracing::trace!(
-                            service_name = model_entry.name,
-                            "New endpoint for existing model"
-                        );
+                        tracing::trace!(name = model_entry.name, "New endpoint for existing model");
+                        self.notify_on_model.notify_waiters();
                         continue;
                     }
 
-                    match self.clone().handle_put(&model_entry).await {
+                    match self.handle_put(&model_entry).await {
                         Ok(()) => {
                             tracing::info!(model_name = model_entry.name, "added model");
+                            self.notify_on_model.notify_waiters();
                         }
                         Err(e) => {
                             tracing::error!(%e, "error adding model {}", model_entry.name);
                         }
                     }
                 }
-                WatchEvent::Delete(kv) => match self.clone().handle_delete(&kv).await {
-                    Ok(model_name) => {
+                WatchEvent::Delete(kv) => match self.handle_delete(&kv).await {
+                    Ok(Some(model_name)) => {
                         tracing::info!("removed model {}", model_name);
+                    }
+                    Ok(None) => {
+                        // There are other instances running this model, nothing to do
                     }
                     Err(e) => {
                         tracing::error!("error removing model: {}", e);
@@ -231,38 +123,48 @@ impl ModelWatcher {
         }
     }
 
-    async fn handle_delete(self: Arc<Self>, kv: &KeyValue) -> anyhow::Result<&str> {
+    /// If the last instance running this model has gone delete it.
+    /// Returns the name of the model we just deleted, if any.
+    async fn handle_delete(&self, kv: &KeyValue) -> anyhow::Result<Option<String>> {
         let key = kv.key_str()?;
-        tracing::debug!(key, "removing model");
-
-        let model_name = key.trim_start_matches(&self.prefix);
+        let model_entry = match self.manager.remove_model_entry(key) {
+            Some(entry) => entry,
+            None => {
+                anyhow::bail!("Missing ModelEntry for {key}");
+            }
+        };
+        let model_name = model_entry.name;
+        let active_instances = self
+            .entries_for_model(&model_name)
+            .await
+            .with_context(|| model_name.clone())?;
+        if !active_instances.is_empty() {
+            return Ok(None);
+        }
 
         // Ignore the errors because model could be either type
-        let _ = self.manager.remove_chat_completions_model(model_name);
-        let _ = self.manager.remove_completions_model(model_name);
+        let _ = self.manager.remove_chat_completions_model(&model_name);
+        let _ = self.manager.remove_completions_model(&model_name);
+        let _ = self.manager.remove_embeddings_model(&model_name);
 
-        Ok(model_name)
+        Ok(Some(model_name))
     }
 
     // Handles a PUT event from etcd, this usually means adding a new model to the list of served
     // models.
-    //
-    // If this method errors, for the near term, we will delete the offending key.
-    async fn handle_put(self: Arc<ModelWatcher>, model_entry: &ModelEntry) -> anyhow::Result<()> {
+    async fn handle_put(&self, model_entry: &ModelEntry) -> anyhow::Result<()> {
         let endpoint_id = model_entry.endpoint.clone();
-        let client = self
+        let component = self
             .drt
             .namespace(&endpoint_id.namespace)?
-            .component(&endpoint_id.component)?
-            .endpoint(&endpoint_id.name)
-            .client()
-            .await?;
+            .component(&endpoint_id.component)?;
+        let client = component.endpoint(&endpoint_id.name).client().await?;
 
         let Some(etcd_client) = self.drt.etcd_client() else {
             // Should be impossible because we only get here on an etcd event
             anyhow::bail!("Missing etcd_client");
         };
-        let card = match model_entry.load_mdc(endpoint_id, &etcd_client).await {
+        let card = match model_entry.load_mdc(&etcd_client).await {
             Ok(card) => {
                 tracing::debug!(card.display_name, "adding model");
                 Some(card)
@@ -273,6 +175,7 @@ impl ModelWatcher {
                 None
             }
         };
+
         match model_entry.model_type {
             ModelType::Backend => {
                 // A Backend model expects pre-processed requests meaning it's up to us whether we
@@ -303,10 +206,11 @@ impl ModelWatcher {
                         ServiceBackend::from_engine(Arc::new(router))
                     }
                     RouterMode::KV => {
-                        let Some(kv_chooser) = self.kv_chooser.clone() else {
-                            anyhow::bail!("KV routing mode with no chooser, should be unreachable");
-                        };
-                        let kv_push_router = KvPushRouter::new(router, kv_chooser);
+                        let chooser = self
+                            .manager
+                            .kv_chooser_for(&model_entry.name, &component, card.kv_cache_block_size)
+                            .await?;
+                        let kv_push_router = KvPushRouter::new(router, chooser);
                         ServiceBackend::from_engine(Arc::new(kv_push_router))
                     }
                 };
@@ -337,10 +241,11 @@ impl ModelWatcher {
                         ServiceBackend::from_engine(Arc::new(router))
                     }
                     RouterMode::KV => {
-                        let Some(kv_chooser) = self.kv_chooser.clone() else {
-                            anyhow::bail!("KV routing mode with no chooser, should be unreachable");
-                        };
-                        let kv_push_router = KvPushRouter::new(router, kv_chooser);
+                        let chooser = self
+                            .manager
+                            .kv_chooser_for(&model_entry.name, &component, card.kv_cache_block_size)
+                            .await?;
+                        let kv_push_router = KvPushRouter::new(router, chooser);
                         ServiceBackend::from_engine(Arc::new(kv_push_router))
                     }
                 };
@@ -376,8 +281,51 @@ impl ModelWatcher {
                 self.manager
                     .add_completions_model(&model_entry.name, engine)?;
             }
+            ModelType::Embedding => {
+                let push_router = PushRouter::<
+                    NvCreateEmbeddingRequest,
+                    Annotated<NvCreateEmbeddingResponse>,
+                >::from_client(client, Default::default())
+                .await?;
+                let engine = Arc::new(push_router);
+                self.manager
+                    .add_embeddings_model(&model_entry.name, engine)?;
+            }
         }
 
         Ok(())
+    }
+
+    /// All the registered ModelEntry, one per instance
+    pub async fn all_entries(&self) -> anyhow::Result<Vec<ModelEntry>> {
+        let Some(etcd_client) = self.drt.etcd_client() else {
+            anyhow::bail!("all_entries: Missing etcd client");
+        };
+        let kvs = etcd_client.kv_get_prefix(MODEL_ROOT_PATH).await?;
+        let mut entries = Vec::with_capacity(kvs.len());
+        for kv in kvs {
+            let model_entry = match serde_json::from_slice::<ModelEntry>(kv.value()) {
+                Ok(model_entry) => model_entry,
+                Err(err) => {
+                    match kv.value_str() {
+                        Ok(value) => {
+                            tracing::error!(%err, value, "Invalid JSON in model entry")
+                        }
+                        Err(value_str_err) => {
+                            tracing::error!(original_error = %err, %value_str_err, "Invalid UTF-8 string in model entry, expected JSON")
+                        }
+                    }
+                    continue;
+                }
+            };
+            entries.push(model_entry);
+        }
+        Ok(entries)
+    }
+
+    pub async fn entries_for_model(&self, model_name: &str) -> anyhow::Result<Vec<ModelEntry>> {
+        let mut all = self.all_entries().await?;
+        all.retain(|entry| entry.name == model_name);
+        Ok(all)
     }
 }
