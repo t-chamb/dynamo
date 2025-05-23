@@ -20,14 +20,24 @@ from data_generator.sampler import get_cdf
 
 
 def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:
-    """Make the graph radix-like (meaning all unary paths are contracted).
-    In addition, keep track of the contracted lengths.
+    """
+    Make the graph radix-like (meaning all unary paths are contracted).
+
+    This function transforms a prefix tree into a radix tree structure by contracting
+    unary paths (chains of nodes with exactly one predecessor and one successor).
+    The resulting radix tree is significantly more compact than the original prefix tree,
+    as it eliminates redundant intermediate nodes while preserving the structural
+    information needed for path sampling.
+
+    This compression is particularly beneficial for efficient path sampling during data
+    synthesis. In addition, keep track of the contracted lengths in the 'length' attribute
+    of each node to preserve the original path information.
 
     Args:
         G (networkx.DiGraph): A directed graph representing a prefix tree structure.
 
     Returns:
-        networkx.DiGraph: The modified graph with unary paths contracted.
+        networkx.DiGraph: The resulting radix tree with unary paths contracted.
     """
     for visited in sorted(np.unique([G.nodes[node]["visited"] for node in G.nodes()])):
         sub_nodes = [node for node in G.nodes() if G.nodes[node]["visited"] == visited]
@@ -76,6 +86,22 @@ def _merge_chains(G: nx.DiGraph) -> nx.DiGraph:
 
 
 def _remove_leaves(G: nx.DiGraph) -> tuple[nx.DiGraph, list[int]]:
+    """
+    Remove all nodes that are only visited once from the tree.
+
+    This function removes nodes representing unique user prompts (nodes with visited=1)
+    from the radix tree, leaving only the "core radix tree" structure that contains
+    commonly traversed paths. The removed nodes typically represent leaf paths that
+    were accessed only once and don't contribute to the core structural patterns.
+
+    Args:
+        G (networkx.DiGraph): A directed graph representing a radix tree structure.
+
+    Returns:
+        tuple[networkx.DiGraph, list[int]]: A tuple containing:
+            - The modified graph with unique nodes removed
+            - A list of lengths of the removed leaf nodes
+    """
     leaves = {
         node: G.nodes[node]["length"]
         for node in G.nodes()

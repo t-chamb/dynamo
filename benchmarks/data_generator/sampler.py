@@ -48,6 +48,13 @@ def sample_from_cdf(
 
 
 class EmpiricalSampler:
+    """
+    Takes data, learns from the pure empirical distribution, and samples directly from it.
+
+    Args:
+        data (Union[List[Any], np.ndarray]): The input data to learn the distribution from.
+    """
+
     def __init__(self, data: Union[List[Any], np.ndarray]) -> None:
         self.rng = np.random.default_rng(0)
         self.empty_data = len(data) == 0
