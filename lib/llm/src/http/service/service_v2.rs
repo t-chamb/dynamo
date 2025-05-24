@@ -11,6 +11,7 @@ use crate::discovery::ModelManager;
 use crate::request_template::RequestTemplate;
 use anyhow::Result;
 use derive_builder::Builder;
+use dynamo_runtime::DistributedRuntime;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -146,8 +147,8 @@ impl HttpServiceConfigBuilder {
 
         let mut routes = vec![
             metrics::router(registry, None),
-            super::openai::list_models_router(model_manager.state(), None),
-            super::health::health_check_router(model_manager.state(), None),
+            super::openai::list_models_router(state.clone(), None),
+            super::health::health_check_router(state.clone(), None),
         ];
 
         if config.enable_chat_endpoints {

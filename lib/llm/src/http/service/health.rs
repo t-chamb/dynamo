@@ -28,24 +28,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{DeploymentState, RouteDoc};
-use axum::{http::Method, http::StatusCode, response::IntoResponse, routing::get, Router};
+use super::{service_v2, RouteDoc};
+use axum::{
+    extract::Path, http::Method, http::StatusCode, response::IntoResponse, routing::get, Router,
+};
+use dynamo_runtime::{DistributedRuntime, Runtime};
 use std::sync::Arc;
 
 pub fn health_check_router(
-    state: Arc<DeploymentState>,
+    state: Arc<service_v2::State>,
     path_override: Option<String>,
 ) -> (Vec<RouteDoc>, Router) {
     let path = path_override.unwrap_or_else(|| "/health".to_string());
-    let doc = RouteDoc::new(Method::GET, &path);
+    let path_namespace = format!("{path}/:namespace");
+
+    let docs: Vec<RouteDoc> = vec![
+        RouteDoc::new(Method::GET, &path),
+        RouteDoc::new(Method::GET, &path_namespace),
+    ];
 
     let router = Router::new()
         .route(&path, get(health_handler))
+        .route(&path_namespace, get(health_namespace_handler))
         .with_state(state);
 
-    (vec![doc], router)
+    (docs, router)
 }
 
 async fn health_handler() -> impl IntoResponse {
     return (StatusCode::OK, "OK");
+}
+
+// A namespace health check will return if the namespace exists in ETCD and will return a list of components currently registered
+async fn health_namespace_handler(Path(namespace): Path<String>) -> impl IntoResponse {
+    let runtime = Runtime::from_current();
+    println!("runtime: {:?}", namespace);
+    match runtime {
+        Ok(runtime) => {
+            let _drt = DistributedRuntime::from_settings(runtime).await.unwrap();
+            return (StatusCode::OK, "OK");
+        }
+        Err(e) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "ERR");
+        }
+    }
 }
