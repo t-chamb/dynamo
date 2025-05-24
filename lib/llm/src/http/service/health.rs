@@ -40,7 +40,7 @@ pub fn health_check_router(
     path_override: Option<String>,
 ) -> (Vec<RouteDoc>, Router) {
     let path = path_override.unwrap_or_else(|| "/health".to_string());
-    let path_namespace = format!("{path}/:namespace");
+    let path_namespace = format!("{path}/{{namespace}}");
 
     let docs: Vec<RouteDoc> = vec![
         RouteDoc::new(Method::GET, &path),
@@ -62,14 +62,25 @@ async fn health_handler() -> impl IntoResponse {
 // A namespace health check will return if the namespace exists in ETCD and will return a list of components currently registered
 async fn health_namespace_handler(Path(namespace): Path<String>) -> impl IntoResponse {
     let runtime = Runtime::from_current();
-    println!("runtime: {:?}", namespace);
     match runtime {
         Ok(runtime) => {
-            let _drt = DistributedRuntime::from_settings(runtime).await.unwrap();
-            return (StatusCode::OK, "OK");
+            let drt = DistributedRuntime::from_settings(runtime).await.unwrap();
+
+            let kvpairs = drt
+                .etcd_client()
+                .unwrap()
+                .kv_get_prefix(namespace)
+                .await
+                .unwrap();
+            let mut components: Vec<String> = vec![];
+            for kvpair in kvpairs {
+                let val = kvpair.value();
+                components.push(String::from_utf8(val.to_vec()).expect("Invalid UTF-8"));
+            }
+            return (StatusCode::OK, components.join(","));
         }
         Err(e) => {
-            return (StatusCode::INTERNAL_SERVER_ERROR, "ERR");
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
         }
     }
 }
