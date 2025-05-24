@@ -66,10 +66,11 @@ async fn health_namespace_handler(Path(namespace): Path<String>) -> impl IntoRes
         Ok(runtime) => {
             let drt = DistributedRuntime::from_settings(runtime).await.unwrap();
 
+            let target_key = format!("instances/{namespace}");
             let kvpairs = drt
                 .etcd_client()
                 .unwrap()
-                .kv_get_prefix(namespace)
+                .kv_get_prefix(target_key)
                 .await
                 .unwrap();
             let mut components: Vec<String> = vec![];
