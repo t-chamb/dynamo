@@ -79,7 +79,7 @@ impl<S: Storage, M: BlockMetadata> ActiveBlockPool<S, M> {
                     self.map.remove(&sequence_hash);
                 }
             }
-            self.cache_hits.remove(&sequence_hash)
+            Some(self.cache_hits.remove(&sequence_hash).unwrap_or_default())
         } else {
             None
         }
@@ -93,7 +93,7 @@ impl<S: Storage, M: BlockMetadata> ActiveBlockPool<S, M> {
             if let Some(arc) = weak.upgrade() {
                 match arc.state() {
                     BlockState::Registered(reg_handle) => {
-                        std::mem::drop(PublishHandle::new(
+                        drop(PublishHandle::new(
                             reg_handle.clone(),
                             self.event_managers
                                 .iter()
@@ -105,10 +105,7 @@ impl<S: Storage, M: BlockMetadata> ActiveBlockPool<S, M> {
                     _ => panic!("Block must be registered. This should never happen."),
                 }
 
-                self.cache_hits
-                    .entry(sequence_hash)
-                    .or_default()
-                    .hits += 1;
+                self.cache_hits.entry(sequence_hash).or_default().hits += 1;
 
                 Some(ImmutableBlock::new(arc))
             } else {

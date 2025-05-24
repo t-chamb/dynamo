@@ -90,10 +90,13 @@ impl CacheStats {
 }
 
 pub trait BlockMetadata: Default + std::fmt::Debug + Clone + Ord + Send + Sync + 'static {
-    /// Called when the block is acquired from the pool
+    /// Called when the block is acquired from the inactive pool.
     fn on_acquired(&mut self, tick: u64);
 
-    /// Called when the block is returned to the pool
+    /// Called when the block is moved to the active pool from the inactive pool.
+    fn on_reacquired(&mut self, tick: u64);
+
+    /// Called when the block is returned to the inactive pool from the active pool.
     fn on_returned(&mut self, tick: u64, stats: Option<CacheStats>);
 
     /// Resets the metadata to the default value
@@ -256,6 +259,10 @@ impl<S: Storage, M: BlockMetadata> Block<S, M> {
 
     pub(crate) fn metadata_on_acquired(&mut self, tick: u64) {
         self.metadata.on_acquired(tick);
+    }
+
+    pub(crate) fn metadata_on_reacquired(&mut self, tick: u64) {
+        self.metadata.on_reacquired(tick);
     }
 
     pub(crate) fn metadata_on_returned(&mut self, tick: u64, stats: Option<CacheStats>) {
@@ -541,6 +548,8 @@ pub struct BasicMetadata {
     #[getter(copy)]
     priority: u32,
     #[getter(copy)]
+    cache_hits: u64,
+    #[getter(copy)]
     returned_tick: u64,
     #[getter(copy)]
     acquired_tick: u64,
@@ -550,6 +559,7 @@ impl BasicMetadata {
     pub fn update_priority(&self, priority: u32) -> Self {
         BasicMetadata {
             priority,
+            cache_hits: self.cache_hits,
             returned_tick: self.returned_tick,
             acquired_tick: self.acquired_tick,
         }
@@ -561,12 +571,22 @@ impl BlockMetadata for BasicMetadata {
         self.acquired_tick = tick;
     }
 
-    fn on_returned(&mut self, tick: u64, _stats: Option<CacheStats>) {
+    fn on_reacquired(&mut self, _tick: u64) {
+        self.cache_hits += 1;
+    }
+
+    fn on_returned(&mut self, tick: u64, stats: Option<CacheStats>) {
         self.returned_tick = tick;
+        if let Some(stats) = stats {
+            self.cache_hits += stats.hits;
+        } else {
+            self.cache_hits = 0;
+        }
     }
 
     fn reset_metadata(&mut self) {
         self.priority = 0;
+        self.cache_hits = 0;
     }
 
     fn offload_priority(&self) -> Option<u64> {

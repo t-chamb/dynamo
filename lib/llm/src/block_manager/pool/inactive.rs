@@ -241,10 +241,12 @@ impl<S: Storage, M: BlockMetadata> InactiveBlockPool<S, M> {
     #[instrument(level = "trace", skip(self), fields(sequence_hash = ?sequence_hash))]
     fn take_with_sequence_hash(&mut self, sequence_hash: SequenceHash) -> Option<Block<S, M>> {
         match self.lookup_map.remove(&sequence_hash) {
-            Some(block) => {
+            Some(mut block) => {
                 // Remove from priority set
                 let priority_key = PriorityKey::new(block.metadata().clone(), sequence_hash);
                 self.priority_set.remove(&priority_key);
+                self.return_tick += 1;
+                block.metadata_on_reacquired(self.return_tick);
                 Some(block)
             }
             None => None,
@@ -515,6 +517,8 @@ pub(crate) mod tests {
         fn on_acquired(&mut self, tick: u64) {
             self.acquired_tick = tick;
         }
+
+        fn on_reacquired(&mut self, _tick: u64) {}
 
         fn on_returned(&mut self, tick: u64, _stats: Option<CacheStats>) {
             self.returned_tick = tick;
