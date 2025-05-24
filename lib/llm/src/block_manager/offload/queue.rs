@@ -17,12 +17,13 @@ use super::request::OffloadRequest;
 use crate::block_manager::{BlockMetadata, Storage};
 use crate::tokens::SequenceHash;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// A simple priority queue for offloading requests.
 pub struct OffloadQueue<Source: Storage, Metadata: BlockMetadata> {
-    queue: BTreeSet<OffloadRequest<Source, Metadata>>,
-    lookup: HashMap<SequenceHash, OffloadRequest<Source, Metadata>>,
+    queue: BTreeSet<Arc<OffloadRequest<Source, Metadata>>>,
+    lookup: HashMap<SequenceHash, Arc<OffloadRequest<Source, Metadata>>>,
     cache_hit_receiver: broadcast::Receiver<Vec<SequenceHash>>,
 }
 
@@ -36,11 +37,12 @@ impl<Source: Storage, Metadata: BlockMetadata> OffloadQueue<Source, Metadata> {
     }
 
     pub fn push(&mut self, request: OffloadRequest<Source, Metadata>) {
+        let request = Arc::new(request);
         self.lookup.insert(request.sequence_hash, request.clone());
         self.queue.insert(request);
     }
 
-    pub fn pop(&mut self) -> Option<OffloadRequest<Source, Metadata>> {
+    pub fn pop(&mut self) -> Option<Arc<OffloadRequest<Source, Metadata>>> {
         if let Some(request) = self.queue.pop_first() {
             self.lookup.remove(&request.sequence_hash);
             Some(request)
@@ -57,7 +59,8 @@ impl<Source: Storage, Metadata: BlockMetadata> OffloadQueue<Source, Metadata> {
                     if request.block.upgrade().is_some() {
                         // We'd probably want something more fancy than this.
                         // But this works for now. Just increment priority by 1.
-                        request.key.priority += 1;
+
+                        Arc::get_mut(&mut request).unwrap().key.priority += 1;
                         self.queue.insert(request.clone());
                         self.lookup.insert(sequence_hash, request);
                     }

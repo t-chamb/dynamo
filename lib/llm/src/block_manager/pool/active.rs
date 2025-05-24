@@ -24,7 +24,7 @@ use crate::block_manager::{
 pub struct ActiveBlockPool<S: Storage, M: BlockMetadata> {
     pub(super) map: HashMap<SequenceHash, Weak<MutableBlock<S, M>>>,
     cache_hits: HashMap<SequenceHash, CacheStats>,
-    event_managers: Vec<Arc<dyn EventManager>>,
+    event_publishers: Vec<Arc<dyn EventPublisher>>,
 }
 
 impl<S: Storage, M: BlockMetadata> ActiveBlockPool<S, M> {
@@ -32,7 +32,10 @@ impl<S: Storage, M: BlockMetadata> ActiveBlockPool<S, M> {
         Self {
             map: HashMap::new(),
             cache_hits: HashMap::new(),
-            event_managers,
+            event_publishers: event_managers
+                .into_iter()
+                .map(|em| em as Arc<dyn EventPublisher>)
+                .collect(),
         }
     }
 
@@ -95,10 +98,7 @@ impl<S: Storage, M: BlockMetadata> ActiveBlockPool<S, M> {
                     BlockState::Registered(reg_handle) => {
                         drop(PublishHandle::new(
                             reg_handle.clone(),
-                            self.event_managers
-                                .iter()
-                                .map(|em| em.clone() as Arc<dyn EventPublisher>)
-                                .collect(),
+                            self.event_publishers.clone(),
                             EventType::CacheHit,
                         ));
                     }

@@ -72,15 +72,9 @@ pub enum BlockError {
     Other(#[from] anyhow::Error),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct CacheStats {
     pub(crate) hits: u64,
-}
-
-impl Default for CacheStats {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl CacheStats {
@@ -579,8 +573,6 @@ impl BlockMetadata for BasicMetadata {
         self.returned_tick = tick;
         if let Some(stats) = stats {
             self.cache_hits += stats.hits;
-        } else {
-            self.cache_hits = 0;
         }
     }
 

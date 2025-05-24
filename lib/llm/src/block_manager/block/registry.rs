@@ -123,22 +123,20 @@ impl BlockRegistry {
         token_block: &TokenBlock,
         event_managers: Vec<Arc<dyn EventManager>>,
     ) -> PublishHandle {
-        let reg_handle = RegistrationHandle::from_token_block(
-            token_block,
-            event_managers
-                .iter()
-                .map(|em| em.clone() as Arc<dyn EventReleaseManager>)
-                .collect(),
-        );
+        // Convert event_managers to release_managers and publishers in one pass
+        let (release_managers, publishers): (Vec<_>, Vec<_>) = event_managers
+            .into_iter()
+            .map(|em| {
+                (
+                    em.clone() as Arc<dyn EventReleaseManager>,
+                    em as Arc<dyn EventPublisher>,
+                )
+            })
+            .unzip();
 
-        PublishHandle::new(
-            Arc::new(reg_handle),
-            event_managers
-                .iter()
-                .map(|em| em.clone() as Arc<dyn EventPublisher>)
-                .collect(),
-            EventType::Register,
-        )
+        let reg_handle = RegistrationHandle::from_token_block(token_block, release_managers);
+
+        PublishHandle::new(Arc::new(reg_handle), publishers, EventType::Register)
     }
 }
 

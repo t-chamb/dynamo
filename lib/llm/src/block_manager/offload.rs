@@ -258,7 +258,8 @@ impl<Metadata: BlockMetadata> OffloadManager<Metadata> {
                 if let Some(block) = block {
                     // If the block is already in the target, don't offload it.
                     if let Ok(blocks) = target_pool
-                        .match_sequence_hashes_blocking(vec![request.sequence_hash].as_slice())
+                        .match_sequence_hashes(vec![request.sequence_hash].as_slice())
+                        .await
                     {
                         if !blocks.is_empty() {
                             continue;

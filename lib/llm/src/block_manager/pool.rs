@@ -71,7 +71,7 @@ pub use super::block::{ImmutableBlock, MutableBlock};
 use super::block::{
     nixl::short_type_name, registry::BlockRegistry, Block, BlockError, BlockMetadata,
 };
-use super::events::EventManager;
+use super::events::{EventManager, EventPublisher};
 use super::storage::Storage;
 
 use crate::tokens::{SequenceHash, TokenBlock};
@@ -443,7 +443,7 @@ struct State<S: Storage, M: BlockMetadata> {
     inactive: InactiveBlockPool<S, M>,
     registry: BlockRegistry,
     return_tx: tokio::sync::mpsc::UnboundedSender<Block<S, M>>,
-    event_managers: Vec<Arc<dyn EventManager>>,
+    event_publishers: Vec<Arc<dyn EventPublisher>>,
 }
 
 struct ProgressEngine<S: Storage, M: BlockMetadata> {

@@ -30,7 +30,10 @@ impl<S: Storage, M: BlockMetadata> State<S, M> {
             inactive: InactiveBlockPool::new(),
             registry: BlockRegistry::new(event_managers.clone()),
             return_tx,
-            event_managers,
+            event_publishers: event_managers
+                .into_iter()
+                .map(|em| em as Arc<dyn EventPublisher>)
+                .collect(),
         }
     }
 
@@ -199,7 +202,6 @@ impl<S: Storage, M: BlockMetadata> State<S, M> {
         return_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Block<S, M>>,
     ) -> Vec<ImmutableBlock<S, M>> {
         let mut immutable_blocks = Vec::new();
-
         for sequence_hash in sequence_hashes {
             if !self.registry.is_registered(sequence_hash) {
                 return immutable_blocks;
@@ -245,12 +247,7 @@ impl<S: Storage, M: BlockMetadata> State<S, M> {
     }
 
     fn publisher(&self) -> Publisher {
-        Publisher::new(
-            self.event_managers
-                .iter()
-                .map(|em| em.clone() as Arc<dyn EventPublisher>)
-                .collect(),
-        )
+        Publisher::new(self.event_publishers.clone())
     }
 }
 
