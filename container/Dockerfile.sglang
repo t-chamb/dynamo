@@ -127,6 +127,9 @@ RUN mkdir /opt/dynamo && \
 ENV VIRTUAL_ENV=/opt/dynamo/venv
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
+# Install sglang
+RUN uv pip install "sglang[all]==${SGLANG_VERSION}"
+
 # Install NIXL Python module
 # TODO: Move gds_path selection based on arch into NIXL build
 RUN if [ "$ARCH" = "arm64" ]; then \
@@ -384,8 +387,7 @@ ENV PATH="/perf/bin:${PATH}"
 RUN uv pip install "git+https://github.com/triton-inference-server/perf_analyzer.git@${GENAI_PERF_TAG}#subdirectory=genai-perf"
 RUN uv pip uninstall tritonclient
 
-# Install sglang
-RUN uv pip install "sglang[all]==${SGLANG_VERSION}"
+
 
 COPY . /workspace
 
