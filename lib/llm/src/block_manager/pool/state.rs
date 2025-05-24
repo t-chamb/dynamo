@@ -15,7 +15,7 @@
 
 use crate::block_manager::{
     block::{registry::BlockRegistationError, BlockState, PrivateBlockExt},
-    events::{EventPublisher, EventType, PublishHandle, Publisher},
+    events::{EventPublisher, Publisher},
 };
 
 use super::*;
@@ -26,7 +26,7 @@ impl<S: Storage, M: BlockMetadata> State<S, M> {
         return_tx: tokio::sync::mpsc::UnboundedSender<Block<S, M>>,
     ) -> Self {
         Self {
-            active: ActiveBlockPool::new(),
+            active: ActiveBlockPool::new(event_managers.clone()),
             inactive: InactiveBlockPool::new(),
             registry: BlockRegistry::new(event_managers.clone()),
             return_tx,
@@ -200,8 +200,6 @@ impl<S: Storage, M: BlockMetadata> State<S, M> {
     ) -> Vec<ImmutableBlock<S, M>> {
         let mut immutable_blocks = Vec::new();
 
-        let mut publish_handles = self.publisher();
-
         for sequence_hash in sequence_hashes {
             if !self.registry.is_registered(sequence_hash) {
                 return immutable_blocks;
@@ -213,23 +211,7 @@ impl<S: Storage, M: BlockMetadata> State<S, M> {
             // 3. return channel
 
             if let Some(immutable) = self.active.match_sequence_hash(sequence_hash) {
-                match immutable.state() {
-                    BlockState::Registered(reg_handle) => {
-                        let publish_handle = PublishHandle::new(
-                            reg_handle.clone(),
-                            self.event_managers
-                                .iter()
-                                .map(|em| em.clone() as Arc<dyn EventPublisher>)
-                                .collect(),
-                            EventType::CacheHit,
-                        );
-                        publish_handles.take_handle(publish_handle);
-                    }
-                    _ => panic!("This should never happen."),
-                }
-
                 immutable_blocks.push(immutable);
-
                 continue;
             }
 
@@ -258,8 +240,8 @@ impl<S: Storage, M: BlockMetadata> State<S, M> {
 
     /// Returns a block to the inactive pool
     pub fn return_block(&mut self, mut block: Block<S, M>) {
-        self.active.remove(&mut block);
-        self.inactive.return_block(block);
+        let cache_stats = self.active.remove(&mut block);
+        self.inactive.return_block(block, cache_stats);
     }
 
     fn publisher(&self) -> Publisher {

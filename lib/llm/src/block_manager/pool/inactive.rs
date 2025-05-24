@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::block_manager::block::BlockState;
+use crate::block_manager::block::{BlockState, CacheStats};
 
 use super::*;
 use tracing::instrument;
@@ -179,7 +179,7 @@ impl<S: Storage, M: BlockMetadata> InactiveBlockPool<S, M> {
         tracing::debug!(count, "Adding blocks to pool");
         self.total_blocks += count as u64;
         // self.available_blocks += count as u64;
-        self.return_blocks(blocks);
+        self.return_blocks(blocks, None);
     }
 
     /// Returns a single block to the pool.
@@ -191,12 +191,12 @@ impl<S: Storage, M: BlockMetadata> InactiveBlockPool<S, M> {
     ///
     /// * `block` - The block ([`Block<S, M>`]) to return.
     #[instrument(level = "debug", skip(self, block))]
-    pub fn return_block(&mut self, mut block: Block<S, M>) {
+    pub fn return_block(&mut self, mut block: Block<S, M>, cache_stats: Option<CacheStats>) {
         // increment the return tick
         self.return_tick += 1;
 
         // update the metadata
-        block.metadata_on_returned(self.return_tick);
+        block.metadata_on_returned(self.return_tick, cache_stats);
 
         // insert the block into the pool
         self.insert(block);
@@ -213,14 +213,18 @@ impl<S: Storage, M: BlockMetadata> InactiveBlockPool<S, M> {
     ///
     /// * `blocks` - A vector of blocks ([`Block<T, M>`]) to return.
     #[instrument(level = "debug", skip(self, blocks))]
-    pub fn return_blocks(&mut self, blocks: Vec<Block<S, M>>) {
+    pub fn return_blocks(
+        &mut self,
+        blocks: Vec<Block<S, M>>,
+        cache_stats: Option<Vec<Option<CacheStats>>>,
+    ) {
         let count = blocks.len();
         tracing::debug!(count, "Returning blocks to pool");
         // return the block to the pool from tail to head
         for (i, block) in blocks.into_iter().rev().enumerate() {
             tracing::trace!(current = i + 1, total = count, "Returning block");
             // Note: return_block has its own instrumentation
-            self.return_block(block);
+            self.return_block(block, cache_stats.as_ref().and_then(|v| v[i].clone()));
         }
     }
 
@@ -489,7 +493,9 @@ impl<S: Storage, M: BlockMetadata> InactiveBlockPool<S, M> {
 pub(crate) mod tests {
     use crate::{
         block_manager::{
-            block::{registry::BlockRegistry, state::CompleteState, Blocks, PrivateBlockExt},
+            block::{
+                registry::BlockRegistry, state::CompleteState, Blocks, CacheStats, PrivateBlockExt,
+            },
             layout::{BlockLayout, FullyContiguous, LayoutConfigBuilder},
             storage::tests::{NullDeviceAllocator, NullDeviceStorage},
         },
@@ -510,7 +516,7 @@ pub(crate) mod tests {
             self.acquired_tick = tick;
         }
 
-        fn on_returned(&mut self, tick: u64) {
+        fn on_returned(&mut self, tick: u64, _stats: Option<CacheStats>) {
             self.returned_tick = tick;
         }
 
@@ -705,7 +711,7 @@ pub(crate) mod tests {
         assert_eq!(pool.total_blocks(), 10);
         assert_eq!(pool.available_blocks(), 0);
 
-        pool.return_blocks(blocks);
+        pool.return_blocks(blocks, None);
 
         assert_eq!(pool.total_blocks(), 10);
         assert_eq!(pool.available_blocks(), 10);
@@ -717,7 +723,7 @@ pub(crate) mod tests {
         assert_eq!(matched_block_count, 0);
         assert_eq!(pool.available_blocks(), 8);
 
-        pool.return_blocks(blocks);
+        pool.return_blocks(blocks, None);
 
         assert_eq!(pool.total_blocks(), 10);
         assert_eq!(pool.available_blocks(), 10);
@@ -727,7 +733,7 @@ pub(crate) mod tests {
         assert_eq!(matched_block_count, 2);
         assert_eq!(pool.available_blocks(), 8);
 
-        pool.return_blocks(blocks);
+        pool.return_blocks(blocks, None);
 
         assert_eq!(pool.total_blocks(), 10);
         assert_eq!(pool.available_blocks(), 10);
@@ -774,7 +780,7 @@ pub(crate) mod tests {
         assert_eq!(matched[1].sequence_hash().unwrap(), hashes[1]);
 
         // Return blocks in reverse order (tail to root)
-        pool.return_blocks(matched);
+        pool.return_blocks(matched, None);
 
         assert_eq!(pool.total_blocks(), 2);
         assert_eq!(pool.available_blocks(), 2);

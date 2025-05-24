@@ -72,12 +72,29 @@ pub enum BlockError {
     Other(#[from] anyhow::Error),
 }
 
+#[derive(Clone, Debug)]
+pub struct CacheStats {
+    pub(crate) hits: u64,
+}
+
+impl Default for CacheStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CacheStats {
+    pub fn new() -> Self {
+        Self { hits: 0 }
+    }
+}
+
 pub trait BlockMetadata: Default + std::fmt::Debug + Clone + Ord + Send + Sync + 'static {
     /// Called when the block is acquired from the pool
     fn on_acquired(&mut self, tick: u64);
 
     /// Called when the block is returned to the pool
-    fn on_returned(&mut self, tick: u64);
+    fn on_returned(&mut self, tick: u64, stats: Option<CacheStats>);
 
     /// Resets the metadata to the default value
     /// If called, the [BlockMetadata::is_reset()] should return true
@@ -241,8 +258,8 @@ impl<S: Storage, M: BlockMetadata> Block<S, M> {
         self.metadata.on_acquired(tick);
     }
 
-    pub(crate) fn metadata_on_returned(&mut self, tick: u64) {
-        self.metadata.on_returned(tick);
+    pub(crate) fn metadata_on_returned(&mut self, tick: u64, stats: Option<CacheStats>) {
+        self.metadata.on_returned(tick, stats);
     }
 }
 
@@ -544,7 +561,7 @@ impl BlockMetadata for BasicMetadata {
         self.acquired_tick = tick;
     }
 
-    fn on_returned(&mut self, tick: u64) {
+    fn on_returned(&mut self, tick: u64, _stats: Option<CacheStats>) {
         self.returned_tick = tick;
     }
 
